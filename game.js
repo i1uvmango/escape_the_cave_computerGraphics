@@ -91,6 +91,46 @@ const loadTex = (url, srgb) => {
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   return t;
 };
+// --- animated lava shader (three.js "shaders [lava]" example, ported for InstancedMesh) ---
+let lavaUniforms = null;
+function buildLavaMaterial() {
+  const base = "https://unpkg.com/three@0.160.0/examples/textures/lava/";
+  const cloud = _loader.load(base + "cloud.png"), lava = _loader.load(base + "lavatile.jpg");
+  cloud.wrapS = cloud.wrapT = lava.wrapS = lava.wrapT = THREE.RepeatWrapping;
+  lava.colorSpace = THREE.SRGBColorSpace;
+  const uniforms = { time: { value: 0 }, uvScale: { value: new THREE.Vector2(2, 2) }, texture1: { value: cloud }, texture2: { value: lava } };
+  lavaUniforms = uniforms;
+  return new THREE.ShaderMaterial({
+    uniforms, toneMapped: false,
+    vertexShader: `
+      uniform vec2 uvScale; varying vec2 vUv;
+      void main() {
+        vUv = uvScale * uv;
+        #ifdef USE_INSTANCING
+          vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        #else
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        #endif
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform float time; uniform sampler2D texture1; uniform sampler2D texture2; varying vec2 vUv;
+      void main() {
+        vec2 T1 = vUv + vec2(1.5, -1.5) * time * 0.02;
+        vec2 T2 = vUv + vec2(-0.5, 2.0) * time * 0.01;
+        vec4 noise = texture2D(texture1, vUv);
+        T1.x += noise.x * 2.0; T1.y += noise.y * 2.0;
+        T2.x -= noise.y * 0.2; T2.y += noise.z * 0.2;
+        float p = texture2D(texture1, T1 * 2.0).a;
+        vec4 color = texture2D(texture2, T2 * 2.0);
+        vec4 temp = color * (vec4(p, p, p, p) * 2.0) + (color * color - 0.1);
+        if (temp.r > 1.0) { temp.bg += clamp(temp.r - 2.0, 0.0, 100.0); }
+        if (temp.g > 1.0) { temp.rb += temp.g - 1.0; }
+        if (temp.b > 1.0) { temp.rg += temp.b - 1.0; }
+        gl_FragColor = vec4(temp.rgb, 1.0);
+      }`,
+  });
+}
 const TEXP = "./texture/Rock035_2K-JPG_";
 const ROCK = {
   color: loadTex(TEXP + "Color.jpg", true),
@@ -365,10 +405,10 @@ function buildWorld(c, isTut = false) {
   collider.updateMatrixWorld(true);
   worldGroup.add(collider);
 
-  // lava (was water) — glowing emissive + lights nearby GI probes
+  // lava (was water) — animated flowing-lava shader + lights nearby GI probes
   if (water.length) {
     const wgeo = new THREE.BoxGeometry(1, 1, 1);
-    const wmat = new THREE.MeshStandardMaterial({ color: 0x3a0d00, emissive: 0xff4400, emissiveIntensity: 1.4, roughness: 0.85, metalness: 0.0 });
+    const wmat = buildLavaMaterial();
     const wmesh = new THREE.InstancedMesh(wgeo, wmat, water.length), m4 = new THREE.Matrix4();
     for (let i = 0; i < water.length; i++) { const [x, y, z] = water[i]; m4.makeTranslation(x + off.x + 0.5, y + off.y + 0.5, z + off.z + 0.5); wmesh.setMatrixAt(i, m4); }
     wmesh.instanceMatrix.needsUpdate = true; worldGroup.add(wmesh);
@@ -1127,6 +1167,7 @@ const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  if (lavaUniforms) lavaUniforms.time.value += dt;   // animate flowing lava
   if (cave) {
     if (started && !won && !lost) {
       if (flashOn) { battery -= dt; if (battery <= 0) { battery = 0; flashOn = false; flashlight.intensity = 0; } }
