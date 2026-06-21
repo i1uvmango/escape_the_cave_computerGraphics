@@ -407,30 +407,30 @@ function buildWorld(c, isTut = false) {
 // --- first-person controller (pointer lock + clamped look) ------------------
 const pos = new THREE.Vector3(), vel = new THREE.Vector3();
 // invisible player body: FrontSide capsule — camera sits inside it (backfaces culled → unseen in 1st person) but it casts a shadow
-let playerBody = null, playerMixer = null, playerAction = null;   // human character: shadow caster (1st) / visible body (3rd)
-function buildPlayerBody() {                         // human body used only as a shadow caster (invisible in 1st person)
-  if (playerBody) { playerBody.removeFromParent(); playerBody = null; playerMixer = null; playerAction = null; }
-  const tmpl = playerTemplate || goblinTemplate;    // prefer the human (Standard Walk); goblin as fallback
-  if (tmpl) {
-    const model = cloneSkinned(tmpl);
-    model.scale.setScalar(tmpl.userData.fit);
-    model.traverse((o) => {
-      if (!o.isMesh) return;
-      o.frustumCulled = false; o.castShadow = true; o.receiveShadow = false;
-      o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();  // isolate
-      for (const m of (Array.isArray(o.material) ? o.material : [o.material])) { m.colorWrite = false; m.depthWrite = false; } // shadow-only
-    });
-    playerBody = new THREE.Group(); playerBody.add(model);
-    playerMixer = new THREE.AnimationMixer(model);
-    const clips = (playerTemplate ? playerClips : goblinClips);
-    if (clips.length) { playerAction = playerMixer.clipAction(clips[0]); playerAction.play(); playerAction.paused = true; }
-  } else {                                          // capsule fallback if both FBX failed
-    const cap = new THREE.Mesh(new THREE.CapsuleGeometry(0.45, 2.0, 4, 8), new THREE.MeshStandardMaterial({ color: 0x202327 }));
-    cap.material.colorWrite = false; cap.material.depthWrite = false;
-    cap.castShadow = true; cap.position.y = 1.45;
-    playerBody = new THREE.Group(); playerBody.add(cap);
-  }
-  playerBody.visible = false; scene.add(playerBody);
+// lightweight humanoid (head+torso+limbs) used ONLY as a shadow caster — built in code, zero download
+let playerBody = null, playerLimbs = null, playerPhase = 0;
+function buildPlayerBody() {
+  if (playerBody) { playerBody.removeFromParent(); playerBody = null; }
+  const mat = new THREE.MeshBasicMaterial();
+  mat.colorWrite = false; mat.depthWrite = false;   // shadow-only: invisible in the camera, still casts into the shadow map
+  const body = new THREE.Group();
+  const add = (geo, x, y) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, 0); m.castShadow = true; m.frustumCulled = false; body.add(m); };
+  add(new THREE.CapsuleGeometry(0.26, 0.7, 4, 8), 0, 1.35);   // torso
+  add(new THREE.SphereGeometry(0.24, 8, 6), 0, 1.95);         // head
+  // limb = pivot group at hip/shoulder, capsule hangs down → rotate group to swing
+  const limb = (px, py, r, len) => { const g = new THREE.Group(); g.position.set(px, py, 0); const c = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 8), mat); c.position.y = -len / 2; c.castShadow = true; c.frustumCulled = false; g.add(c); body.add(g); return g; };
+  playerLimbs = {
+    legL: limb(0.16, 0.95, 0.14, 0.85), legR: limb(-0.16, 0.95, 0.14, 0.85),
+    armL: limb(0.42, 1.6, 0.11, 0.7), armR: limb(-0.42, 1.6, 0.11, 0.7),
+  };
+  playerBody = body; playerBody.visible = false; scene.add(playerBody);
+}
+function animatePlayerBody(dt, moving, run) {        // simple walk: swing legs/arms while moving
+  if (!playerLimbs) return;
+  if (moving) playerPhase += dt * (run ? 17 : 11);
+  const s = moving ? Math.sin(playerPhase) * 0.7 : 0;
+  playerLimbs.legL.rotation.x = s; playerLimbs.legR.rotation.x = -s;
+  playerLimbs.armL.rotation.x = -s; playerLimbs.armR.rotation.x = s;
 }
 // only the NEAREST glowstone casts a shadow (1 shadow light, cost)
 let shadowTorch = null;
@@ -506,12 +506,11 @@ function updatePlayer(dt) {
     for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { const x = vx + dx, z = vz + dz; if (x >= 0 && x < X && z >= 0 && z < Z) visited[x + z * X] = 1; }
   }
   placeCamera();                                    // 1st/3rd person
-  if (playerBody) {                                 // human body: shadow-only (1st) or visible (3rd)
+  if (playerBody) {                                 // humanoid shadow caster (invisible in 1st person)
     playerBody.visible = true;
-    playerBody.position.set(pos.x, pos.y, pos.z);    // model origin = feet
+    playerBody.position.set(pos.x, pos.y, pos.z);    // origin = feet
     playerBody.rotation.y = yaw + BODY_FACE;         // face look/move direction
-    if (playerAction) playerAction.paused = len <= 0;   // walk only while moving
-    if (playerMixer) playerMixer.update(dt);
+    animatePlayerBody(dt, len > 0, (keys["ShiftLeft"] || keys["ShiftRight"]) && keys["KeyW"]);
   }
 }
 
@@ -1047,8 +1046,8 @@ function toggleMusic() { if (!musicGain) return; musicOn = !musicOn; musicGain.g
 // --- boot --------------------------------------------------------------------
 (async function boot() {
   hud.textContent = "불러오는 중…";
-  await Promise.all([loadGoblin(), loadPlayer()]);
-  buildPlayerBody();                  // human player body (Standard Walk); shadow caster / 3rd-person model
+  await loadGoblin();                 // (Standard Walk 94MB 제거: 웹 로딩 안정화 — 플레이어 그림자는 고블린 메시 재사용)
+  buildPlayerBody();                  // shadow caster (goblinTemplate fallback)
   if (TUTORIAL) {                     // tutorial stage
     tutorialMode = true;
     buildWorld(makeTutorialCave(), true);
