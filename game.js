@@ -26,6 +26,8 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 const BRIGHTNESS = 55;                              // 1..100 scale
 renderer.toneMappingExposure = BRIGHTNESS / 14;    // 55 -> ~3.9 exposure
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.BasicShadowMap;     // nearest sampling (cheapest); 1 shadow light only (cost)
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -211,7 +213,7 @@ function clearWorld() {
   scene.remove(worldGroup); worldGroup = new THREE.Group(); scene.add(worldGroup);
   keyItems.length = 0; torches.length = 0; goblins.length = 0;
   exitMesh = null; exitLight = null; collider = null; caveGeo = null; giVertCell = null; probeMesh = null; probeCells.length = 0;
-  keysGot = 0; won = false; lost = false; torchesLeft = 10; goblinsAngry = false; giDirty = 0;
+  keysGot = 0; won = false; lost = false; torchesLeft = 10; goblinsAngry = false; giDirty = 0; shadowTorch = null;
 }
 function makeTutorialCave() {   // tiny solid room with a floor, one key, an exit
   const X = 22, Y = 12, Z = 30, data = new Uint8Array(X * Y * Z).fill(1), idx = (x, y, z) => x + y * X + z * X * Y;
@@ -353,6 +355,7 @@ function buildWorld(c, isTut = false) {
   if (collider) collider.geometry.disposeBoundsTree();
   sgeo.computeBoundsTree();
   collider = new THREE.Mesh(sgeo, makeRockMaterial());
+  collider.receiveShadow = true;                    // cave receives the player/goblin shadow (does not cast → cheap)
   collider.updateMatrixWorld(true);
   worldGroup.add(collider);
 
@@ -401,6 +404,22 @@ function buildWorld(c, isTut = false) {
 
 // --- first-person controller (pointer lock + clamped look) ------------------
 const pos = new THREE.Vector3(), vel = new THREE.Vector3();
+// invisible player body: FrontSide capsule — camera sits inside it (backfaces culled → unseen in 1st person) but it casts a shadow
+const playerBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.45, 2.0, 4, 8), new THREE.MeshStandardMaterial({ color: 0x202327 }));
+playerBody.castShadow = true; playerBody.receiveShadow = false; playerBody.visible = false; scene.add(playerBody);
+// only the NEAREST glowstone casts a shadow (1 shadow light, cost)
+let shadowTorch = null;
+function updateShadowLight() {
+  if (!torches.length) { if (shadowTorch) { shadowTorch.light.castShadow = false; shadowTorch = null; } return; }
+  let best = null, bd = Infinity;
+  for (const tr of torches) { const dx = tr.light.position.x - pos.x, dz = tr.light.position.z - pos.z, d = dx * dx + dz * dz; if (d < bd) { bd = d; best = tr; } }
+  if (best === shadowTorch) return;                  // only re-bind when the nearest glowstone changes
+  if (shadowTorch) shadowTorch.light.castShadow = false;
+  shadowTorch = best;
+  const L = best.light;
+  if (!L.userData.shadowInit) { L.shadow.mapSize.set(512, 512); L.shadow.camera.near = 0.3; L.shadow.camera.far = 55; L.shadow.bias = -0.002; L.shadow.normalBias = 0.25; L.userData.shadowInit = true; }
+  L.castShadow = true;
+}
 let onGround = false;
 const keys = Object.create(null);
 let yaw = 0, pitch = 0;
@@ -458,6 +477,7 @@ function updatePlayer(dt) {
   }
   camera.position.set(pos.x, pos.y + (PH - 0.5), pos.z);
   headLamp.position.copy(camera.position);
+  playerBody.visible = true; playerBody.position.set(pos.x, pos.y + 1.45, pos.z);   // follows player (invisible in 1st person)
 }
 
 // --- gameplay update ---------------------------------------------------------
@@ -685,7 +705,7 @@ function spawnGoblins(n) {
     if (goblinTemplate) {
       const model = cloneSkinned(goblinTemplate);
       model.scale.setScalar(goblinTemplate.userData.fit);
-      model.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
+      model.traverse((o) => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = true; } });
       g.add(model);
       mixer = new THREE.AnimationMixer(model);
       if (goblinClips.length) { action = mixer.clipAction(goblinClips[0]); action.play(); action.paused = true; }
@@ -985,6 +1005,7 @@ function animate() {
       updateBattery();
       updatePlayer(dt);
       if (collider && giDirty > 0) { ddgiTick(); giDirty--; }   // static DDGI: only re-trace while converging after a placement
+      updateShadowLight();                          // nearest glowstone = the single shadow caster
       updateGoblins(dt);
       if (hp < HP_MAX) { regenAcc += dt; if (regenAcc >= 30) { regenAcc -= 30; hp = Math.min(HP_MAX, hp + 2); updateHearts(); } } // +1 heart / 30s
       // danger audio: heartbeat when a goblin is near, occasional distant growl
