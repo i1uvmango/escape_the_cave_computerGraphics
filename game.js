@@ -781,7 +781,7 @@ async function loadPlayer() {
     const obj = await new FBXLoader().loadAsync("./Standard Walk.fbx");  // human character + walk animation
     const box = new THREE.Box3().setFromObject(obj);
     const h = box.max.y - box.min.y;
-    obj.userData.fit = h > 0 ? 2.7 / h : 0.01;   // scale to ~player height (2.7 units)
+    obj.userData.fit = h > 0 ? 2.1 / h : 0.01;   // scale to ~player height (2.1 units; shrunk)
     playerTemplate = obj;
     playerClips = obj.animations || [];
     console.log("[player] loaded, clips:", playerClips.length, "fit:", obj.userData.fit.toFixed(4));
