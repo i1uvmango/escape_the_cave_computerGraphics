@@ -211,7 +211,7 @@ function clearWorld() {
   scene.remove(worldGroup); worldGroup = new THREE.Group(); scene.add(worldGroup);
   keyItems.length = 0; torches.length = 0; goblins.length = 0;
   exitMesh = null; exitLight = null; collider = null; caveGeo = null; giVertCell = null; probeMesh = null; probeCells.length = 0;
-  keysGot = 0; won = false; lost = false; torchesLeft = 10; goblinsAngry = false;
+  keysGot = 0; won = false; lost = false; torchesLeft = 10; goblinsAngry = false; giDirty = 0;
 }
 function makeTutorialCave() {   // tiny solid room with a floor, one key, an exit
   const X = 22, Y = 12, Z = 30, data = new Uint8Array(X * Y * Z).fill(1), idx = (x, y, z) => x + y * X + z * X * Y;
@@ -588,7 +588,7 @@ function placeTorch() {
   const light = new THREE.PointLight(0xffe1a0, 9, 55, 1.0); light.position.copy(p).add(new THREE.Vector3(0, 0.2, 0));
   worldGroup.add(grp); worldGroup.add(light);
   torches.push({ grp, light, flame: block });   // glowstone (steady pulse)
-  torchesLeft--; sfxTorch(); if (collider) ddgiTick(); updateHUD();   // DDGI picks up the new glowstone
+  torchesLeft--; sfxTorch(); giDirty = DDGI_BURST; updateHUD();   // static GI re-converges (only this new glowstone matters)
   if (torchesLeft === 0) {
     if (tutorialMode) { markTut("glow"); showToast("글로우스톤을 모두 소진했습니다 (회수 불가). 본게임에서는 다 쓰면 <b>고블린이 깨어나 공격</b>하니 전략적으로 사용하세요!", 5500); }
     else { goblinsAngry = true; showToast("⚠ 글로우스톤 소진 — <b>고블린이 깨어나 공격을 시작합니다!</b>", 6000); }
@@ -799,11 +799,11 @@ function giCell(wx, wy, wz) {
   return cx + cy * giDimX + cz * giDimX * giDimY;
 }
 // ===== DDGI: probe grid + BVH ray-traced irradiance + temporal accumulation =====
-const DDGI_RAYS = 12, DDGI_REFRESH = 16;           // fewer rays + slower refresh (temporal accumulation smooths it)
-const DDGI_TGT = 55, FLASH_RANGE = 100, FLASH_COS = 0.70;
-let ddgiDirs = null, giProbes = null, giCursor = 0;
+const DDGI_RAYS = 16, DDGI_REFRESH = 8, DDGI_BURST = 40;  // STATIC GI (glowstones only): traced in bursts after a placement
+const DDGI_TGT = 55;
+let ddgiDirs = null, giProbes = null, giCursor = 0, giDirty = 0;  // giDirty = frames left to converge the static grid
 const _rc = new THREE.Raycaster(); _rc.firstHitOnly = true;
-const _pO = new THREE.Vector3(), _rd = new THREE.Vector3(), _hn = new THREE.Vector3(), _beam = new THREE.Vector3();
+const _pO = new THREE.Vector3(), _rd = new THREE.Vector3(), _hn = new THREE.Vector3();
 function buildDDGI() {
   ddgiDirs = [];                                    // Fibonacci-sphere ray directions
   const N = DDGI_RAYS, GA = Math.PI * (3 - Math.sqrt(5));
@@ -822,17 +822,16 @@ function occluded(px, py, pz, tx, ty, tz, dist) {   // shadow ray via BVH
   _rc.set(_pO, _rd); _rc.far = dist - 0.3;
   return _rc.intersectObject(collider, false).length > 0;
 }
-function gatherProbe(idx) {                          // trace DDGI_RAYS rays; gather direct light at the hits
+function gatherProbe(idx) {                          // STATIC GI: trace rays, gather GLOWSTONE light only (flashlight is a plain direct light)
   const ci = giProbes[idx * 4], px = giProbes[idx * 4 + 1], py = giProbes[idx * 4 + 2], pz = giProbes[idx * 4 + 3];
   let ar = 0.016, ag = 0.02, ab = 0.028; const inv = 1 / DDGI_RAYS;
-  const fOn = flashOn && battery > 0; if (fOn) camera.getWorldDirection(_beam);
   for (let k = 0; k < DDGI_RAYS; k++) {
     _pO.set(px, py, pz); _rc.set(_pO, ddgiDirs[k]); _rc.far = 60;
     const h = _rc.intersectObject(collider, false)[0]; if (!h) continue;
     const hp = h.point; _hn.copy(h.face ? h.face.normal : ddgiDirs[k]);
-    if (_hn.dot(ddgiDirs[k]) > 0) _hn.negate();      // orient surface normal back toward the probe (lit side)
+    if (_hn.dot(ddgiDirs[k]) > 0) _hn.negate();      // orient surface normal toward the probe (lit side)
     let r = 0, g = 0, b = 0;
-    for (const tr of torches) {                      // glowstone bounce
+    for (const tr of torches) {                      // glowstone bounce (static light source)
       const lp = tr.light.position, dx = lp.x - hp.x, dy = lp.y - hp.y, dz = lp.z - hp.z, dd = Math.hypot(dx, dy, dz);
       if (dd > DDGI_TGT || dd < 0.05) continue;
       const ndl = Math.max(0, (dx * _hn.x + dy * _hn.y + dz * _hn.z) / dd); if (ndl <= 0) continue;
@@ -840,19 +839,9 @@ function gatherProbe(idx) {                          // trace DDGI_RAYS rays; ga
       const at = 1 - dd / DDGI_TGT, e = at * at * ndl * 1.8;
       r += tr.light.color.r * e; g += tr.light.color.g * e; b += tr.light.color.b * e;
     }
-    if (fOn) {                                       // dynamic flashlight bounce (cone from camera)
-      const lp = camera.position, dx = lp.x - hp.x, dy = lp.y - hp.y, dz = lp.z - hp.z, dd = Math.hypot(dx, dy, dz);
-      if (dd < FLASH_RANGE && dd > 0.05 && (-dx * _beam.x - dy * _beam.y - dz * _beam.z) / dd > FLASH_COS) {
-        const ndl = Math.max(0, (dx * _hn.x + dy * _hn.y + dz * _hn.z) / dd);
-        if (ndl > 0 && !occluded(hp.x, hp.y, hp.z, lp.x, lp.y, lp.z, dd)) {
-          const at = 1 - dd / FLASH_RANGE, e = at * at * ndl * 2.0;
-          r += 1.0 * e; g += 0.95 * e; b += 0.85 * e;
-        }
-      }
-    }
     ar += r * inv; ag += g * inv; ab += b * inv;
   }
-  const a = 0.3;                                      // temporal blend toward the new estimate
+  const a = 0.5;                                      // temporal blend (static → converges over the burst frames)
   giIrr[ci * 3] += (ar - giIrr[ci * 3]) * a; giIrr[ci * 3 + 1] += (ag - giIrr[ci * 3 + 1]) * a; giIrr[ci * 3 + 2] += (ab - giIrr[ci * 3 + 2]) * a;
 }
 function ddgiTick() {                                // amortized: refresh a slice of probes each frame, then bake
@@ -995,7 +984,7 @@ function animate() {
       if (flashOn) { battery -= dt; if (battery <= 0) { battery = 0; flashOn = false; flashlight.intensity = 0; } }
       updateBattery();
       updatePlayer(dt);
-      if (collider) ddgiTick();         // DDGI: ray-traced probes (flashlight + glowstones)
+      if (collider && giDirty > 0) { ddgiTick(); giDirty--; }   // static DDGI: only re-trace while converging after a placement
       updateGoblins(dt);
       if (hp < HP_MAX) { regenAcc += dt; if (regenAcc >= 30) { regenAcc -= 30; hp = Math.min(HP_MAX, hp + 2); updateHearts(); } } // +1 heart / 30s
       // danger audio: heartbeat when a goblin is near, occasional distant growl
