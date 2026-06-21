@@ -42,7 +42,7 @@ scene.add(headLamp);
 
 // Flashlight = spotlight fixed to the camera (shines where you look).
 scene.add(camera); // camera must be in the scene graph for its child lights
-const flashlight = new THREE.SpotLight(0xfff2d8, 11, 60, Math.PI / 4, 0.4, 0.9); // 45deg cone, shorter reach
+const flashlight = new THREE.SpotLight(0xfff2d8, 14, 110, Math.PI / 4, 0.4, 0.7); // 45deg cone (same width), longer reach
 flashlight.position.set(0, 0, 0.2);
 flashlight.target.position.set(0, 0, -1);
 camera.add(flashlight); camera.add(flashlight.target);
@@ -528,7 +528,7 @@ renderer.domElement.addEventListener("mousedown", (e) => {
   dragging = true; requestLock();
   if (started && !won && !lost && !(!flashOn && battery <= 0)) {  // left = toggle (can't turn on when dead)
     flashOn = !flashOn;
-    flashlight.intensity = flashOn ? 11 : 0;
+    flashlight.intensity = flashOn ? 14 : 0;
     updateBattery(); markTut("flash");
     if (flashOn && !flashTipShown) { flashTipShown = true; showToast("손전등 지속시간은 3분입니다. 배터리를 고려하여 아껴 사용하세요."); }
   }
@@ -800,7 +800,7 @@ function giCell(wx, wy, wz) {
 }
 // ===== DDGI: probe grid + BVH ray-traced irradiance + temporal accumulation =====
 const DDGI_RAYS = 24, DDGI_REFRESH = 8;            // full-grid refresh every 8 frames
-const DDGI_TGT = 55, FLASH_RANGE = 60, FLASH_COS = 0.70;
+const DDGI_TGT = 55, FLASH_RANGE = 110, FLASH_COS = 0.70;
 let ddgiDirs = null, giProbes = null, giCursor = 0;
 const _rc = new THREE.Raycaster(); _rc.firstHitOnly = true;
 const _pO = new THREE.Vector3(), _rd = new THREE.Vector3(), _hn = new THREE.Vector3(), _beam = new THREE.Vector3();
