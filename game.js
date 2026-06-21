@@ -195,14 +195,15 @@ let torchesLeft = 10; const torches = []; let aimedKey = null;
 // health (Minecraft-style: 10 hearts = 20 HP), goblins
 const HP_MAX = 20; let hp = HP_MAX, regenAcc = 0, shakeT = 0;
 const goblins = []; const GOBLIN_SPEED = 1.5, GOBLIN_DETECT = 45, GOBLIN_DMG = 3;
+let goblinsAngry = false;   // unleashed when all glowstones are spent (strategic resource)
 let goblinTemplate = null, goblinClips = []; const GOBLIN_FACE = 0; // model facing offset
 // baked indirect-GI volume (flood from glowstones) + audio timers
-let caveGeo = null, caveAGI = null, giIrr = null, giOpen = null, giDimX = 0, giDimY = 0, giDimZ = 0;
+let caveGeo = null, caveAGI = null, giIrr = null, giTmp = null, giOpen = null, giDimX = 0, giDimY = 0, giDimZ = 0;
 const GI_CELL = 3; let stepT = 0, heartT = 0, growlT = 6;
 let visited = null, mapOpen = false, mapCanvas = null;   // explored-route map (M)
 // tutorial stage: practice controls in a small room before the real cave
 let worldGroup = new THREE.Group(); scene.add(worldGroup);
-const TUTORIAL = false;          // set true to play the tutorial stage first
+const TUTORIAL = true;           // set false to skip straight into the cave
 let tutorialMode = false;
 const tut = { move: false, flash: false, glow: false, key: false, map: false };
 function clearWorld() {
@@ -210,7 +211,7 @@ function clearWorld() {
   scene.remove(worldGroup); worldGroup = new THREE.Group(); scene.add(worldGroup);
   keyItems.length = 0; torches.length = 0; goblins.length = 0;
   exitMesh = null; exitLight = null; collider = null; caveGeo = null; probeMesh = null; probeCells.length = 0;
-  keysGot = 0; won = false; lost = false; torchesLeft = 10;
+  keysGot = 0; won = false; lost = false; torchesLeft = 10; goblinsAngry = false;
 }
 function makeTutorialCave() {   // tiny solid room with a floor, one key, an exit
   const X = 22, Y = 12, Z = 30, data = new Uint8Array(X * Y * Z).fill(1), idx = (x, y, z) => x + y * X + z * X * Y;
@@ -265,9 +266,10 @@ document.body.appendChild(fprompt);
 const INTRO = [
   ["나침반", "좌측 하단 나침반은 <b>가장 가까운 열쇠</b> 방향을 가리킵니다.", () => compassEl],
   ["손전등", "<b>좌클릭</b>으로 손전등을 켜고 끕니다. 지속시간은 <b>3분</b>뿐이니 배터리를 아껴 쓰세요.", () => batteryEl],
-  ["글로우스톤", "<b>우클릭</b>으로 글로우스톤을 설치합니다. 영구히 빛나지만 <b>회수할 수 없습니다</b>.", () => hud],
+  ["글로우스톤", "<b>우클릭</b>으로 글로우스톤을 설치합니다. 영구히 빛나지만 <b>회수할 수 없고</b>, <b>10개를 모두 소진하면 고블린이 깨어나 공격</b>하니 전략적으로 쓰세요.", () => hud],
   ["열쇠 조각", "화면 중앙 <b>조준점</b>으로 열쇠를 겨냥하고 <b>F</b>로 줍습니다. 3개를 모으면 출구가 열립니다.", () => crosshair],
   ["지도", "<b>M</b> 키로 지나온 길(지도)을 확인할 수 있습니다.", () => document.getElementById("guide")],
+  ["GI 확인 (probe)", "<b>P</b> 키로 GI probe 격자를 표시합니다 — 손전등·글로우스톤 빛이 동굴에 어떻게 퍼지는지(간접광)를 점으로 확인할 수 있습니다.", () => document.getElementById("guide")],
 ];
 const introBox = document.createElement("div");
 introBox.style.cssText = "position:fixed;top:15%;left:50%;transform:translateX(-50%);z-index:23;display:none;font:16px/1.7 ui-monospace,monospace;color:#eef3fb;background:rgba(12,18,30,.96);border:1px solid rgba(120,140,180,.45);border-radius:14px;padding:24px 34px;text-align:center;max-width:560px;box-shadow:0 10px 44px rgba(0,0,0,.7);";
@@ -298,7 +300,7 @@ function advanceIntro() {
   if (introIdx >= INTRO.length) { introIdx = -1; introBox.style.display = "none"; highlightTarget(null); updateTut(); }
   else showIntroCard();
 }
-const _dir = new THREE.Vector3(), aimRay = new THREE.Raycaster();
+const _dir = new THREE.Vector3(), aimRay = new THREE.Raycaster(), _giP = new THREE.Vector3();
 const _cqInv = new THREE.Quaternion(), _kq = new THREE.Quaternion(), _UP = new THREE.Vector3(0, 1, 0);
 // debug readout (so we can see lock/keys/mouse state)
 let lastDx = 0, lastDy = 0, lockErr = "";
@@ -587,9 +589,11 @@ function placeTorch() {
   worldGroup.add(grp); worldGroup.add(light);
   torches.push({ grp, light, flame: block });   // glowstone (steady pulse)
   torchesLeft--; sfxTorch(); computeGI(); updateHUD();   // bounce light updates GI
-  if (tutorialMode) {
-    if (torchesLeft === 0) { markTut("glow"); showToast("글로우스톤은 회수할 수 없습니다. (10/10 모두 설치 완료)"); }
-    else showToast(`글로우스톤 설치 ${10 - torchesLeft}/10 — 10개를 모두 사용해 보세요`, 1600);
+  if (torchesLeft === 0) {
+    if (tutorialMode) { markTut("glow"); showToast("글로우스톤을 모두 소진했습니다 (회수 불가). 본게임에서는 다 쓰면 <b>고블린이 깨어나 공격</b>하니 전략적으로 사용하세요!", 5500); }
+    else { goblinsAngry = true; showToast("⚠ 글로우스톤 소진 — <b>고블린이 깨어나 공격을 시작합니다!</b>", 6000); }
+  } else if (tutorialMode) {
+    showToast(`글로우스톤 설치 ${10 - torchesLeft}/10 — 10개를 모두 사용해 보세요`, 1600);
   }
   // NOTE: each torch is a real light for now; the DDGI step replaces these with
   // a single illuminance volume (cheap + drives goblin safety).
@@ -726,7 +730,7 @@ function inFlashlightView(p) {
 }
 function updateGoblins(dt) {
   for (const g of goblins) {
-    const aggro = inFlashlightView(g.pos);   // follows the flashlight beam
+    const aggro = goblinsAngry || inFlashlightView(g.pos);   // beam-drawn, or unleashed when glowstones run out
     let moving = false;
     if (aggro) {
       const dx = pos.x - g.pos.x, dz = pos.z - g.pos.z, dist = Math.hypot(dx, dz) || 1;
@@ -798,7 +802,17 @@ function computeGI() {
   const W = giDimX, H = giDimY, D = giDimZ, n = W * H * D;
   for (let i = 0; i < n; i++) { giIrr[i * 3] = 0.016; giIrr[i * 3 + 1] = 0.02; giIrr[i * 3 + 2] = 0.028; } // ambient floor
   for (const tr of torches) { const ci = giCell(tr.grp.position.x, tr.grp.position.y, tr.grp.position.z); giIrr[ci * 3] += 1.5; giIrr[ci * 3 + 1] += 1.2; giIrr[ci * 3 + 2] += 0.65; }
-  const tmp = new Float32Array(giIrr.length), nb = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], decay = 0.8;
+  // dynamic flashlight as a GI source (moving light → recomputed every frame)
+  if (flashOn && battery > 0 && collider) {
+    camera.getWorldDirection(_dir);
+    aimRay.set(camera.position, _dir); aimRay.far = 40;
+    const hit = aimRay.intersectObject(collider, false)[0];
+    const p = hit ? hit.point : _giP.copy(camera.position).addScaledVector(_dir, 12);
+    const ci = giCell(p.x, p.y, p.z); giIrr[ci * 3] += 1.2; giIrr[ci * 3 + 1] += 1.05; giIrr[ci * 3 + 2] += 0.85;
+    const cp = giCell(camera.position.x, camera.position.y, camera.position.z); giIrr[cp * 3] += 0.45; giIrr[cp * 3 + 1] += 0.42; giIrr[cp * 3 + 2] += 0.4;
+  }
+  if (!giTmp || giTmp.length !== giIrr.length) giTmp = new Float32Array(giIrr.length);
+  const tmp = giTmp, nb = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], decay = 0.8;
   for (let it = 0; it < 9; it++) {                 // propagate around corners
     tmp.set(giIrr);
     for (let cz = 0; cz < D; cz++) for (let cy = 0; cy < H; cy++) for (let cx = 0; cx < W; cx++) {
@@ -938,6 +952,7 @@ function animate() {
       if (flashOn) { battery -= dt; if (battery <= 0) { battery = 0; flashOn = false; flashlight.intensity = 0; } }
       updateBattery();
       updatePlayer(dt);
+      if (collider) computeGI();        // dynamic GI every frame (flashlight + glowstones)
       updateGoblins(dt);
       if (hp < HP_MAX) { regenAcc += dt; if (regenAcc >= 30) { regenAcc -= 30; hp = Math.min(HP_MAX, hp + 2); updateHearts(); } } // +1 heart / 30s
       // danger audio: heartbeat when a goblin is near, occasional distant growl
