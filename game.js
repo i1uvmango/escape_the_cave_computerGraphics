@@ -91,43 +91,46 @@ const loadTex = (url, srgb) => {
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   return t;
 };
-// --- animated lava shader (three.js "shaders [lava]" example, ported for InstancedMesh) ---
+// --- animated lava shader: fully procedural GLSL fbm noise (no texture assets) ---
 let lavaUniforms = null;
 function buildLavaMaterial() {
-  const base = "https://unpkg.com/three@0.160.0/examples/textures/lava/";
-  const cloud = _loader.load(base + "cloud.png"), lava = _loader.load(base + "lavatile.jpg");
-  cloud.wrapS = cloud.wrapT = lava.wrapS = lava.wrapT = THREE.RepeatWrapping;
-  lava.colorSpace = THREE.SRGBColorSpace;
-  const uniforms = { time: { value: 0 }, uvScale: { value: new THREE.Vector2(2, 2) }, texture1: { value: cloud }, texture2: { value: lava } };
+  const uniforms = { time: { value: 0 } };
   lavaUniforms = uniforms;
   return new THREE.ShaderMaterial({
     uniforms, toneMapped: false,
     vertexShader: `
-      uniform vec2 uvScale; varying vec2 vUv;
+      varying vec2 vUv; varying vec3 vWorld;
       void main() {
-        vUv = uvScale * uv;
+        vUv = uv;
         #ifdef USE_INSTANCING
+          vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);
           vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
         #else
+          vec4 wp = modelMatrix * vec4(position, 1.0);
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
         #endif
+        vWorld = wp.xyz;
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: `
-      uniform float time; uniform sampler2D texture1; uniform sampler2D texture2; varying vec2 vUv;
+      uniform float time; varying vec2 vUv; varying vec3 vWorld;
+      float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float noise(vec2 p){
+        vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i + vec2(0,0)), hash(i + vec2(1,0)), u.x),
+                   mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), u.x), u.y);
+      }
+      float fbm(vec2 p){ float v = 0.0, a = 0.5; for(int i = 0; i < 5; i++){ v += a * noise(p); p *= 2.0; a *= 0.5; } return v; }
       void main() {
-        vec2 T1 = vUv + vec2(1.5, -1.5) * time * 0.02;
-        vec2 T2 = vUv + vec2(-0.5, 2.0) * time * 0.01;
-        vec4 noise = texture2D(texture1, vUv);
-        T1.x += noise.x * 2.0; T1.y += noise.y * 2.0;
-        T2.x -= noise.y * 0.2; T2.y += noise.z * 0.2;
-        float p = texture2D(texture1, T1 * 2.0).a;
-        vec4 color = texture2D(texture2, T2 * 2.0);
-        vec4 temp = color * (vec4(p, p, p, p) * 2.0) + (color * color - 0.1);
-        if (temp.r > 1.0) { temp.bg += clamp(temp.r - 2.0, 0.0, 100.0); }
-        if (temp.g > 1.0) { temp.rb += temp.g - 1.0; }
-        if (temp.b > 1.0) { temp.rg += temp.b - 1.0; }
-        gl_FragColor = vec4(temp.rgb, 1.0);
+        // world XZ so the pattern is continuous across the puddle (not per-cube)
+        vec2 uv = vWorld.xz * 0.6;
+        vec2 q = vec2(fbm(uv + vec2(0.0, time * 0.15)), fbm(uv + vec2(5.2, time * 0.12)));
+        float n = fbm(uv + q * 2.0 + vec2(time * 0.05, -time * 0.07));
+        vec3 dark = vec3(0.30, 0.02, 0.0), mid = vec3(0.95, 0.25, 0.0), hot = vec3(1.7, 1.0, 0.25);
+        vec3 col = mix(dark, mid, smoothstep(0.25, 0.55, n));
+        col = mix(col, hot, smoothstep(0.55, 0.85, n));
+        col += hot * smoothstep(0.72, 0.96, n) * 0.7;   // glowing cracks
+        gl_FragColor = vec4(col, 1.0);
       }`,
   });
 }
