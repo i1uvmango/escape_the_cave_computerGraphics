@@ -42,7 +42,7 @@ scene.add(headLamp);
 
 // Flashlight = spotlight fixed to the camera (shines where you look).
 scene.add(camera); // camera must be in the scene graph for its child lights
-const flashlight = new THREE.SpotLight(0xfff2d8, 14, 110, Math.PI / 4, 0.4, 0.7); // 45deg cone (same width), longer reach
+const flashlight = new THREE.SpotLight(0xfff2d8, 14, 100, Math.PI / 4, 0.4, 0.8); // 45deg cone, reach 100, decay 0.8
 flashlight.position.set(0, 0, 0.2);
 flashlight.target.position.set(0, 0, -1);
 camera.add(flashlight); camera.add(flashlight.target);
@@ -800,7 +800,7 @@ function giCell(wx, wy, wz) {
 }
 // ===== DDGI: probe grid + BVH ray-traced irradiance + temporal accumulation =====
 const DDGI_RAYS = 12, DDGI_REFRESH = 16;           // fewer rays + slower refresh (temporal accumulation smooths it)
-const DDGI_TGT = 55, FLASH_RANGE = 110, FLASH_COS = 0.70;
+const DDGI_TGT = 55, FLASH_RANGE = 100, FLASH_COS = 0.70;
 let ddgiDirs = null, giProbes = null, giCursor = 0;
 const _rc = new THREE.Raycaster(); _rc.firstHitOnly = true;
 const _pO = new THREE.Vector3(), _rd = new THREE.Vector3(), _hn = new THREE.Vector3(), _beam = new THREE.Vector3();
