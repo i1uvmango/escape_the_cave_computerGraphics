@@ -92,7 +92,7 @@ const loadTex = (url, srgb) => {
   return t;
 };
 // --- animated lava shader: fully procedural GLSL fbm noise (no texture assets) ---
-let lavaUniforms = null;
+let lavaUniforms = null, lavaCenter = null;
 function buildLavaMaterial() {
   const uniforms = { time: { value: 0 } };
   lavaUniforms = uniforms;
@@ -408,13 +408,24 @@ function buildWorld(c, isTut = false) {
   collider.updateMatrixWorld(true);
   worldGroup.add(collider);
 
-  // lava (was water) — animated flowing-lava shader + lights nearby GI probes
+  // lava (was water) — animated flowing-lava shader + real warm lights + GI injection
+  lavaCenter = null;
   if (water.length) {
     const wgeo = new THREE.BoxGeometry(1, 1, 1);
     const wmat = buildLavaMaterial();
     const wmesh = new THREE.InstancedMesh(wgeo, wmat, water.length), m4 = new THREE.Matrix4();
-    for (let i = 0; i < water.length; i++) { const [x, y, z] = water[i]; m4.makeTranslation(x + off.x + 0.5, y + off.y + 0.5, z + off.z + 0.5); wmesh.setMatrixAt(i, m4); }
+    let sx = 0, sy = 0, sz = 0;
+    for (let i = 0; i < water.length; i++) { const [x, y, z] = water[i]; m4.makeTranslation(x + off.x + 0.5, y + off.y + 0.5, z + off.z + 0.5); wmesh.setMatrixAt(i, m4); sx += x; sy += y; sz += z; }
     wmesh.instanceMatrix.needsUpdate = true; worldGroup.add(wmesh);
+    lavaCenter = new THREE.Vector3(sx / water.length + off.x + 0.5, sy / water.length + off.y + 0.5, sz / water.length + off.z + 0.5);
+    // real warm point lights spread across the pool so lava actually lights the cavern (no shadow → cheap)
+    const nL = Math.min(4, water.length);
+    for (let i = 0; i < nL; i++) {
+      const [x, y, z] = water[Math.floor((i + 0.5) / nL * water.length)];
+      const L = new THREE.PointLight(0xff5a18, 7, 40, 1.0);
+      L.position.set(x + off.x + 0.5, y + off.y + 1.4, z + off.z + 0.5);
+      worldGroup.add(L);
+    }
   }
 
   // --- keys ---
@@ -927,13 +938,13 @@ function buildLavaGI(lavaCells) {   // lava is a STATIC area light: inject warm 
   giLava = new Float32Array(giIrr.length);
   if (!lavaCells || !lavaCells.length) return;
   const W = giDimX, H = giDimY, D = giDimZ;
-  const LR = 1.5, LG = 0.5, LB = 0.12;                 // warm lava irradiance
+  const LR = 2.2, LG = 0.75, LB = 0.18;                // warm lava irradiance (brighter so it carries further)
   for (let k = 0; k < lavaCells.length; k++) {
     const [x, y, z] = lavaCells[k], ci = giCell(x + off.x + 0.5, y + off.y + 0.5, z + off.z + 0.5);
     if (giLava[ci * 3] < LR) { giLava[ci * 3] = LR; giLava[ci * 3 + 1] = LG; giLava[ci * 3 + 2] = LB; }
   }
-  const nb = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], decay = 0.6, tmp = new Float32Array(giLava.length);
-  for (let it = 0; it < 4; it++) {                     // soft halo: max-decay flood so nearby walls catch the glow
+  const nb = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], decay = 0.78, tmp = new Float32Array(giLava.length);
+  for (let it = 0; it < 10; it++) {                    // soft halo: max-decay flood so the glow carries far across the cavern
     tmp.set(giLava);
     for (let cz = 0; cz < D; cz++) for (let cy = 0; cy < H; cy++) for (let cx = 0; cx < W; cx++) {
       const ci = cx + cy * W + cz * W * H; if (!giOpen[ci]) continue;
@@ -1170,7 +1181,7 @@ const clock = new THREE.Clock();
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
-  if (lavaUniforms) lavaUniforms.time.value += dt;   // animate flowing lava
+  if (lavaUniforms && lavaCenter && camera.position.distanceToSquared(lavaCenter) < 2500) lavaUniforms.time.value += dt;   // flow only when near (≤50)
   if (cave) {
     if (started && !won && !lost) {
       if (flashOn) { battery -= dt; if (battery <= 0) { battery = 0; flashOn = false; flashlight.intensity = 0; } }
