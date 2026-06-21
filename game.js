@@ -204,6 +204,7 @@ let playerTemplate = null, playerClips = []; // human player character (Standard
 const BODY_FACE = Math.PI;  // player model facing offset (body is shadow-only, 1st person)
 // baked indirect-GI volume (flood from glowstones) + audio timers
 let caveGeo = null, caveAGI = null, giIrr = null, giVertCell = null, giOpen = null, giDimX = 0, giDimY = 0, giDimZ = 0;
+let giLava = null;   // static lava emission injected into the probe grid (computed once at build)
 const GI_CELL = 3; let stepT = 0, heartT = 0, growlT = 6;
 let visited = null, mapOpen = false, mapCanvas = null;   // explored-route map (M)
 // tutorial stage: practice controls in a small room before the real cave
@@ -364,10 +365,10 @@ function buildWorld(c, isTut = false) {
   collider.updateMatrixWorld(true);
   worldGroup.add(collider);
 
-  // water
+  // lava (was water) — glowing emissive + lights nearby GI probes
   if (water.length) {
     const wgeo = new THREE.BoxGeometry(1, 1, 1);
-    const wmat = new THREE.MeshStandardMaterial({ color: 0x163a66, transparent: true, opacity: 0.55, roughness: 0.2, metalness: 0.0 });
+    const wmat = new THREE.MeshStandardMaterial({ color: 0x3a0d00, emissive: 0xff4400, emissiveIntensity: 1.4, roughness: 0.85, metalness: 0.0 });
     const wmesh = new THREE.InstancedMesh(wgeo, wmat, water.length), m4 = new THREE.Matrix4();
     for (let i = 0; i < water.length; i++) { const [x, y, z] = water[i]; m4.makeTranslation(x + off.x + 0.5, y + off.y + 0.5, z + off.z + 0.5); wmesh.setMatrixAt(i, m4); }
     wmesh.instanceMatrix.needsUpdate = true; worldGroup.add(wmesh);
@@ -403,7 +404,7 @@ function buildWorld(c, isTut = false) {
   hp = HP_MAX; updateHearts(); spawnGoblins(isTut ? 0 : 8);   // doubled goblin count
   battery = BATTERY_MAX; flashOn = true; flashlight.intensity = 11; updateBattery();   // reset flashlight
   visited = new Uint8Array(c.dims.X * c.dims.Z);   // fog-of-war for the map
-  setupGI(); buildVertCellMap(); bakeGIToVertices();   // DDGI probe grid + static vertex→cell map
+  setupGI(); buildVertCellMap(); buildLavaGI(water); bakeGIToVertices();   // DDGI probe grid + static vertex→cell map + lava emission
   updateHUD();
 }
 
@@ -878,6 +879,34 @@ function giCell(wx, wy, wz) {
   const cz = Math.max(0, Math.min(giDimZ - 1, (vz / GI_CELL) | 0));
   return cx + cy * giDimX + cz * giDimX * giDimY;
 }
+function buildLavaGI(lavaCells) {   // lava is a STATIC area light: inject warm emission into nearby probes once at build
+  if (!giIrr) { giLava = null; return; }
+  giLava = new Float32Array(giIrr.length);
+  if (!lavaCells || !lavaCells.length) return;
+  const W = giDimX, H = giDimY, D = giDimZ;
+  const LR = 1.5, LG = 0.5, LB = 0.12;                 // warm lava irradiance
+  for (let k = 0; k < lavaCells.length; k++) {
+    const [x, y, z] = lavaCells[k], ci = giCell(x + off.x + 0.5, y + off.y + 0.5, z + off.z + 0.5);
+    if (giLava[ci * 3] < LR) { giLava[ci * 3] = LR; giLava[ci * 3 + 1] = LG; giLava[ci * 3 + 2] = LB; }
+  }
+  const nb = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], decay = 0.6, tmp = new Float32Array(giLava.length);
+  for (let it = 0; it < 4; it++) {                     // soft halo: max-decay flood so nearby walls catch the glow
+    tmp.set(giLava);
+    for (let cz = 0; cz < D; cz++) for (let cy = 0; cy < H; cy++) for (let cx = 0; cx < W; cx++) {
+      const ci = cx + cy * W + cz * W * H; if (!giOpen[ci]) continue;
+      let r = giLava[ci * 3], g = giLava[ci * 3 + 1], b = giLava[ci * 3 + 2];
+      for (let q = 0; q < 6; q++) {
+        const nx = cx + nb[q][0], ny = cy + nb[q][1], nz = cz + nb[q][2];
+        if (nx < 0 || nx >= W || ny < 0 || ny >= H || nz < 0 || nz >= D) continue;
+        const ni = nx + ny * W + nz * W * H; if (!giOpen[ni]) continue;
+        const nr = giLava[ni * 3] * decay, ng = giLava[ni * 3 + 1] * decay, nbv = giLava[ni * 3 + 2] * decay;
+        if (nr > r) r = nr; if (ng > g) g = ng; if (nbv > b) b = nbv;
+      }
+      tmp[ci * 3] = r; tmp[ci * 3 + 1] = g; tmp[ci * 3 + 2] = b;
+    }
+    giLava.set(tmp);
+  }
+}
 // ===== DDGI: probe grid + BVH ray-traced irradiance + temporal accumulation =====
 const DDGI_RAYS = 12, DDGI_REFRESH = 14, DDGI_BURST = 56;  // STATIC GI burst: fewer rays + more frame-spread to avoid placement-frame lag spikes
 const DDGI_TGT = 55, FLASH_GI = 0.85, FLASH_GI_RANGE = 100; // dynamic flashlight indirect (NOT DDGI — a cheap real-time injection trick)
@@ -977,10 +1006,10 @@ function buildVertCellMap() {   // vertex→probe-cell is static (geometry fixed
 }
 function bakeGIToVertices() {   // per-frame: static glowstone GI + dynamic flashlight injection
   if (!caveGeo || !caveAGI || !giIrr || !giVertCell) return;
-  const f = giFlash;
+  const f = giFlash, lv = giLava;
   for (let i = 0; i < giVertCell.length; i++) {
     const ci = giVertCell[i] * 3;
-    caveAGI[i * 3] = giIrr[ci] + (f ? f[ci] : 0); caveAGI[i * 3 + 1] = giIrr[ci + 1] + (f ? f[ci + 1] : 0); caveAGI[i * 3 + 2] = giIrr[ci + 2] + (f ? f[ci + 2] : 0);
+    caveAGI[i * 3] = giIrr[ci] + (f ? f[ci] : 0) + (lv ? lv[ci] : 0); caveAGI[i * 3 + 1] = giIrr[ci + 1] + (f ? f[ci + 1] : 0) + (lv ? lv[ci + 1] : 0); caveAGI[i * 3 + 2] = giIrr[ci + 2] + (f ? f[ci + 2] : 0) + (lv ? lv[ci + 2] : 0);
   }
   caveGeo.getAttribute("aGI").needsUpdate = true;
   if (probeMesh && probeMesh.visible) updateProbeColors();   // keep probe colors live
@@ -1010,8 +1039,8 @@ function updateProbeColors() {
   if (!probeMesh || !giIrr) return;
   const c = new THREE.Color(), count = probeCells.length / 4;
   for (let i = 0; i < count; i++) {
-    const ci = probeCells[i * 4], f = giFlash;
-    const r = giIrr[ci * 3] + (f ? f[ci * 3] : 0), g = giIrr[ci * 3 + 1] + (f ? f[ci * 3 + 1] : 0), b = giIrr[ci * 3 + 2] + (f ? f[ci * 3 + 2] : 0);
+    const ci = probeCells[i * 4], f = giFlash, lv = giLava;
+    const r = giIrr[ci * 3] + (f ? f[ci * 3] : 0) + (lv ? lv[ci * 3] : 0), g = giIrr[ci * 3 + 1] + (f ? f[ci * 3 + 1] : 0) + (lv ? lv[ci * 3 + 1] : 0), b = giIrr[ci * 3 + 2] + (f ? f[ci * 3 + 2] : 0) + (lv ? lv[ci * 3 + 2] : 0);
     // unlit probes = faint blue dots so the lattice is visible; lit probes glow warm
     c.setRGB(Math.min(1, 0.06 + r * 1.7), Math.min(1, 0.10 + g * 1.7), Math.min(1, 0.22 + b * 1.6));
     probeMesh.setColorAt(i, c);
