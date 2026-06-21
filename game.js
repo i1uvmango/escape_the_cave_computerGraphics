@@ -415,13 +415,14 @@ function buildPlayerBody() {
       if (!o.isMesh) return;
       o.frustumCulled = false; o.castShadow = true; o.receiveShadow = false;
       o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();  // isolate from the goblins
-      for (const m of (Array.isArray(o.material) ? o.material : [o.material])) m.side = THREE.FrontSide; // backface-cull → unseen from inside
+      for (const m of (Array.isArray(o.material) ? o.material : [o.material])) { m.colorWrite = false; m.depthWrite = false; } // shadow-only: invisible in the camera, still casts into the shadow map
     });
     playerBody = new THREE.Group(); playerBody.add(model);
     playerMixer = new THREE.AnimationMixer(model);
     if (goblinClips.length) { playerAction = playerMixer.clipAction(goblinClips[0]); playerAction.play(); playerAction.paused = true; }
   } else {                                          // capsule fallback if the FBX failed
     const cap = new THREE.Mesh(new THREE.CapsuleGeometry(0.45, 2.0, 4, 8), new THREE.MeshStandardMaterial({ color: 0x202327 }));
+    cap.material.colorWrite = false; cap.material.depthWrite = false;   // shadow-only
     cap.castShadow = true; cap.position.y = 1.45;
     playerBody = new THREE.Group(); playerBody.add(cap);
   }
