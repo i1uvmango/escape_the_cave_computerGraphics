@@ -449,6 +449,7 @@ let onGround = false;
 const keys = Object.create(null);
 let yaw = 0, pitch = 0;
 const RAD = 0.4, STEP = 1.05, GRAV = 30, LOOK = 0.0022; // collision = smooth mesh, so slimmer capsule is fine
+const WALK_SPEED = 4.2, RUN_SPEED = 7.5;                // lowered to reduce tunneling (was 6 / 13)
 const ray = new THREE.Raycaster(); ray.firstHitOnly = true;
 const DOWN = new THREE.Vector3(0, -1, 0);
 const _seg = new THREE.Line3(), _box = new THREE.Box3(), _tp = new THREE.Vector3(), _cp = new THREE.Vector3(), _push = new THREE.Vector3(), _ro = new THREE.Vector3();
@@ -493,9 +494,17 @@ function updatePlayer(dt) {
   if (keys["KeyA"]) { mx -= right.x; mz -= right.z; }
   const len = Math.hypot(mx, mz);
   if (len > 0) {
-    const run = (keys["ShiftLeft"] || keys["ShiftRight"]) && keys["KeyW"]; const sp = (run ? 13 : 6) * dt;
-    pos.x += (mx / len) * sp; pos.z += (mz / len) * sp;
-    stepT -= dt; if (stepT <= 0) { sfxStep(); stepT = run ? 0.34 : 0.5; }   // footsteps
+    const run = (keys["ShiftLeft"] || keys["ShiftRight"]) && keys["KeyW"];
+    const dirx = mx / len, dirz = mz / len;
+    let dist = (run ? RUN_SPEED : WALK_SPEED) * dt;        // slower speeds
+    const maxStep = RAD * 0.5;                             // sub-step so fast moves / low fps can't tunnel thin walls
+    while (dist > 1e-4) {
+      const d = Math.min(maxStep, dist);
+      pos.x += dirx * d; pos.z += dirz * d;
+      collideWalls();
+      dist -= d;
+    }
+    stepT -= dt; if (stepT <= 0) { sfxStep(); stepT = run ? 0.4 : 0.55; }   // footsteps
     markTut("move");
   }
   if (keys["Space"] && onGround) { vel.y = 8.5; onGround = false; }          // jump
@@ -864,7 +873,7 @@ function giCell(wx, wy, wz) {
   return cx + cy * giDimX + cz * giDimX * giDimY;
 }
 // ===== DDGI: probe grid + BVH ray-traced irradiance + temporal accumulation =====
-const DDGI_RAYS = 16, DDGI_REFRESH = 8, DDGI_BURST = 40;  // STATIC GI (glowstones only): traced in bursts after a placement
+const DDGI_RAYS = 12, DDGI_REFRESH = 14, DDGI_BURST = 56;  // STATIC GI burst: fewer rays + more frame-spread to avoid placement-frame lag spikes
 const DDGI_TGT = 55, FLASH_GI = 0.85, FLASH_GI_RANGE = 100; // dynamic flashlight indirect (NOT DDGI — a cheap real-time injection trick)
 let ddgiDirs = null, giProbes = null, giCursor = 0, giDirty = 0;  // giDirty = frames left to converge the static grid
 let giFlash = null, flashWasOn = false;            // per-frame flashlight indirect, added on top of the static glowstone GI
@@ -905,17 +914,25 @@ function occluded(px, py, pz, tx, ty, tz, dist) {   // shadow ray via BVH
   _rc.set(_pO, _rd); _rc.far = dist - 0.3;
   return _rc.intersectObject(collider, false).length > 0;
 }
+const _nearT = []; const _AMB = [0.016, 0.02, 0.028];
 function gatherProbe(idx) {                          // STATIC GI: trace rays, gather GLOWSTONE light only (flashlight is a plain direct light)
-  const ci = giProbes[idx * 4], px = giProbes[idx * 4 + 1], py = giProbes[idx * 4 + 2], pz = giProbes[idx * 4 + 3];
-  let ar = 0.016, ag = 0.02, ab = 0.028; const inv = 1 / DDGI_RAYS;
+  const ci = giProbes[idx * 4], px = giProbes[idx * 4 + 1], py = giProbes[idx * 4 + 2], pz = giProbes[idx * 4 + 3], a = 0.5;
+  // pre-filter: only glowstones close enough to possibly light this probe — far ones cost 0 rays
+  let nT = 0; const R2 = (DDGI_TGT + 62) * (DDGI_TGT + 62);
+  for (const tr of torches) { const lp = tr.light.position, dx = lp.x - px, dy = lp.y - py, dz = lp.z - pz; if (dx * dx + dy * dy + dz * dz < R2) _nearT[nT++] = tr; }
+  if (nT === 0) {                                    // no glowstone near → just ambient (skip all ray tracing)
+    giIrr[ci * 3] += (_AMB[0] - giIrr[ci * 3]) * a; giIrr[ci * 3 + 1] += (_AMB[1] - giIrr[ci * 3 + 1]) * a; giIrr[ci * 3 + 2] += (_AMB[2] - giIrr[ci * 3 + 2]) * a;
+    return;
+  }
+  let ar = _AMB[0], ag = _AMB[1], ab = _AMB[2]; const inv = 1 / DDGI_RAYS;
   for (let k = 0; k < DDGI_RAYS; k++) {
     _pO.set(px, py, pz); _rc.set(_pO, ddgiDirs[k]); _rc.far = 60;
     const h = _rc.intersectObject(collider, false)[0]; if (!h) continue;
     const hp = h.point; _hn.copy(h.face ? h.face.normal : ddgiDirs[k]);
     if (_hn.dot(ddgiDirs[k]) > 0) _hn.negate();      // orient surface normal toward the probe (lit side)
     let r = 0, g = 0, b = 0;
-    for (const tr of torches) {                      // glowstone bounce (static light source)
-      const lp = tr.light.position, dx = lp.x - hp.x, dy = lp.y - hp.y, dz = lp.z - hp.z, dd = Math.hypot(dx, dy, dz);
+    for (let t = 0; t < nT; t++) {                   // only the near glowstones
+      const tr = _nearT[t], lp = tr.light.position, dx = lp.x - hp.x, dy = lp.y - hp.y, dz = lp.z - hp.z, dd = Math.hypot(dx, dy, dz);
       if (dd > DDGI_TGT || dd < 0.05) continue;
       const ndl = Math.max(0, (dx * _hn.x + dy * _hn.y + dz * _hn.z) / dd); if (ndl <= 0) continue;
       if (occluded(hp.x, hp.y, hp.z, lp.x, lp.y, lp.z, dd)) continue;
@@ -924,7 +941,6 @@ function gatherProbe(idx) {                          // STATIC GI: trace rays, g
     }
     ar += r * inv; ag += g * inv; ab += b * inv;
   }
-  const a = 0.5;                                      // temporal blend (static → converges over the burst frames)
   giIrr[ci * 3] += (ar - giIrr[ci * 3]) * a; giIrr[ci * 3 + 1] += (ag - giIrr[ci * 3 + 1]) * a; giIrr[ci * 3 + 2] += (ab - giIrr[ci * 3 + 2]) * a;
 }
 function ddgiTick() {                                // amortized: refresh a slice of static probes (bake happens per-frame)
