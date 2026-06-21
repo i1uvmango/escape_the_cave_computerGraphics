@@ -260,29 +260,41 @@ const fprompt = document.createElement("div");
 fprompt.style.cssText = "position:fixed;top:50%;left:calc(50% + 20px);transform:translateY(-50%);z-index:12;display:none;font:13px/1 ui-monospace,monospace;color:#ffd24a;background:rgba(10,14,22,.72);border:1px solid rgba(255,210,74,.5);border-radius:6px;padding:5px 9px;pointer-events:none;white-space:nowrap;text-shadow:0 1px 2px #000;";
 fprompt.textContent = "[F] 줍기";
 document.body.appendChild(fprompt);
-// tutorial intro cards (press F to advance through tool explanations)
+// tutorial intro cards: spotlight the relevant UI (dim everything else), F to advance
 const INTRO = [
-  ["나침반", "좌측 하단 나침반은 <b>가장 가까운 열쇠</b>를 가리킵니다."],
-  ["손전등", "<b>좌클릭</b>으로 손전등을 켜고 끕니다. 지속시간은 <b>3분</b>뿐이니 아껴 쓰세요."],
-  ["글로우스톤", "<b>우클릭</b>으로 글로우스톤을 설치합니다. 영구히 빛나지만 <b>회수할 수 없습니다</b>."],
-  ["열쇠 조각", "크로스헤어로 조준한 뒤 <b>F</b>로 열쇠를 줍습니다. 3개를 모으면 출구가 열립니다."],
-  ["지도", "<b>M</b> 키로 지나온 길을 확인할 수 있습니다."],
+  ["나침반", "좌측 하단 나침반은 <b>가장 가까운 열쇠</b> 방향을 가리킵니다.", () => compassEl],
+  ["손전등", "<b>좌클릭</b>으로 손전등을 켜고 끕니다. 지속시간은 <b>3분</b>뿐이니 배터리를 아껴 쓰세요.", () => batteryEl],
+  ["글로우스톤", "<b>우클릭</b>으로 글로우스톤을 설치합니다. 영구히 빛나지만 <b>회수할 수 없습니다</b>.", () => hud],
+  ["열쇠 조각", "화면 중앙 <b>조준점</b>으로 열쇠를 겨냥하고 <b>F</b>로 줍습니다. 3개를 모으면 출구가 열립니다.", () => crosshair],
+  ["지도", "<b>M</b> 키로 지나온 길(지도)을 확인할 수 있습니다.", () => document.getElementById("guide")],
 ];
 const introBox = document.createElement("div");
-introBox.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:22;display:none;font:16px/1.7 ui-monospace,monospace;color:#eef3fb;background:rgba(12,18,30,.95);border:1px solid rgba(120,140,180,.4);border-radius:14px;padding:26px 36px;text-align:center;max-width:560px;box-shadow:0 10px 44px rgba(0,0,0,.65);";
+introBox.style.cssText = "position:fixed;top:15%;left:50%;transform:translateX(-50%);z-index:23;display:none;font:16px/1.7 ui-monospace,monospace;color:#eef3fb;background:rgba(12,18,30,.96);border:1px solid rgba(120,140,180,.45);border-radius:14px;padding:24px 34px;text-align:center;max-width:560px;box-shadow:0 10px 44px rgba(0,0,0,.7);";
 document.body.appendChild(introBox);
+// spotlight cutout: a transparent box over the target + a huge dark box-shadow
+const highlightEl = document.createElement("div");
+highlightEl.style.cssText = "position:fixed;z-index:21;display:none;border:2px solid #ffd24a;border-radius:10px;box-shadow:0 0 0 9999px rgba(0,0,0,.72), 0 0 16px rgba(255,210,74,.7);pointer-events:none;transition:left .2s,top .2s,width .2s,height .2s;";
+document.body.appendChild(highlightEl);
+function highlightTarget(el) {
+  if (!el || !el.getBoundingClientRect) { highlightEl.style.display = "none"; return; }
+  const r = el.getBoundingClientRect(), pad = 10;
+  highlightEl.style.left = (r.left - pad) + "px"; highlightEl.style.top = (r.top - pad) + "px";
+  highlightEl.style.width = (r.width + pad * 2) + "px"; highlightEl.style.height = (r.height + pad * 2) + "px";
+  highlightEl.style.display = "block";
+}
 let introIdx = -1;
 function showIntroCard() {
-  const [t, d] = INTRO[introIdx];
+  const [t, d, tgt] = INTRO[introIdx];
   introBox.innerHTML = `<div style="font-size:13px;color:#8fa6c4;letter-spacing:2px">조작 안내 ${introIdx + 1} / ${INTRO.length}</div>` +
     `<div style="font-size:24px;color:#ffd24a;margin:8px 0 10px">${t}</div><div>${d}</div>` +
-    `<div style="margin-top:16px;opacity:.78;font-size:14px">넘어가려면 <b style="color:#ffd24a">F</b></div>`;
+    `<div style="margin-top:16px;opacity:.78;font-size:14px">강조된 부분을 확인하고 <b style="color:#ffd24a">F</b>로 넘어가세요</div>`;
   introBox.style.display = "block";
+  highlightTarget(tgt ? tgt() : null);
 }
 function startIntro() { introIdx = 0; tutBox.style.display = "none"; showIntroCard(); }
 function advanceIntro() {
   introIdx++;
-  if (introIdx >= INTRO.length) { introIdx = -1; introBox.style.display = "none"; updateTut(); }
+  if (introIdx >= INTRO.length) { introIdx = -1; introBox.style.display = "none"; highlightTarget(null); updateTut(); }
   else showIntroCard();
 }
 const _dir = new THREE.Vector3(), aimRay = new THREE.Raycaster();
