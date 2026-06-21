@@ -196,7 +196,7 @@ let keysGot = 0, totalKeys = 0, won = false, lost = false, started = false;
 let torchesLeft = 10; const torches = []; let aimedKey = null;
 // health (Minecraft-style: 10 hearts = 20 HP), goblins
 const HP_MAX = 20; let hp = HP_MAX, regenAcc = 0, shakeT = 0;
-const goblins = []; const GOBLIN_SPEED = 2.5, GOBLIN_DETECT = 45, GOBLIN_DMG = 3, GOBLIN_HEAR = 30; // speed = 플레이어 달리기(7.5)의 1/3; GOBLIN_HEAR = 달릴 때 들리는 범위
+const goblins = []; const GOBLIN_SPEED = 3.8, GOBLIN_DETECT = 45, GOBLIN_DMG = 3, GOBLIN_HEAR = 30; // 약 달리기(10)의 1/3 ~ 0.4배; GOBLIN_HEAR = 달릴 때 들리는 범위
 let playerRunning = false;          // true while sprinting (Shift+W) → goblins hear it
 let goblinsAngry = false;   // unleashed when all glowstones are spent (strategic resource)
 let goblinTemplate = null, goblinClips = []; const GOBLIN_FACE = 0; // model facing offset
@@ -274,7 +274,7 @@ const INTRO = [
   ["손전등", "<b>좌클릭</b>으로 손전등을 켜고 끕니다. 지속시간은 <b>3분</b>뿐이니 배터리를 아껴 쓰세요.", () => batteryEl],
   ["글로우스톤", "<b>우클릭</b>으로 글로우스톤을 설치합니다. 영구히 빛나지만 <b>회수할 수 없고</b>, <b>10개를 모두 소진하면 고블린이 깨어나 공격</b>하니 전략적으로 쓰세요.", () => hud],
   ["열쇠 조각", "화면 중앙 <b>조준점</b>으로 열쇠를 겨냥하고 <b>F</b>로 줍습니다. 3개를 모으면 출구가 열립니다.", () => crosshair],
-  ["고블린 (위험)", "어둠 속 고블린은 <b>손전등 빛</b>이나 <b>달리는 발소리</b>에 이끌려 다가옵니다. <b>Shift+W로 달리면 멀리서도 들키니</b>, 위험할 땐 걷는 게 안전합니다. 이동 속도는 당신 달리기의 1/3입니다.", () => heartsEl],
+  ["고블린 (위험)", "어둠 속 고블린은 <b>손전등 빛</b>이나 <b>달리는 발소리</b>에 이끌려 다가옵니다. <b>Shift+W로 달리면 멀리서도 들키니</b>, 위험할 땐 걷는 게 안전합니다. 이동 속도는 당신 달리기의 약 1/3입니다.", () => heartsEl],
   ["지도", "<b>M</b> 키로 지나온 길(지도)을 확인할 수 있습니다.", () => document.getElementById("guide")],
   ["GI 확인 (probe)", "<b>P</b> 키로 GI probe 격자를 표시합니다 — 손전등·글로우스톤 빛이 동굴에 어떻게 퍼지는지(간접광)를 점으로 확인할 수 있습니다.", () => document.getElementById("guide")],
 ];
@@ -452,7 +452,7 @@ let onGround = false;
 const keys = Object.create(null);
 let yaw = 0, pitch = 0;
 const RAD = 0.4, STEP = 1.05, GRAV = 30, LOOK = 0.0022; // collision = smooth mesh, so slimmer capsule is fine
-const WALK_SPEED = 4.2, RUN_SPEED = 7.5;                // lowered to reduce tunneling (was 6 / 13)
+const WALK_SPEED = 4.2, RUN_SPEED = 10;                 // run faster (sub-step collision prevents tunneling)
 const ray = new THREE.Raycaster(); ray.firstHitOnly = true;
 const DOWN = new THREE.Vector3(0, -1, 0);
 const _seg = new THREE.Line3(), _box = new THREE.Box3(), _tp = new THREE.Vector3(), _cp = new THREE.Vector3(), _push = new THREE.Vector3(), _ro = new THREE.Vector3();
