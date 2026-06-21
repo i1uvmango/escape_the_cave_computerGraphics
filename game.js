@@ -46,7 +46,7 @@ const flashlight = new THREE.SpotLight(0xfff2d8, 11, 60, Math.PI / 4, 0.4, 0.9);
 flashlight.position.set(0, 0, 0.2);
 flashlight.target.position.set(0, 0, -1);
 camera.add(flashlight); camera.add(flashlight.target);
-let flashOn = true; const BATTERY_MAX = 180; let battery = BATTERY_MAX; // 3-min flashlight battery
+let flashOn = true; const BATTERY_MAX = 180; let battery = BATTERY_MAX, flashTipShown = false; // 3-min flashlight battery
 
 // --- held view-models (always drawn on top, no wall clipping) ---------------
 const viewModels = new THREE.Group(); camera.add(viewModels);
@@ -217,13 +217,13 @@ function makeTutorialCave() {   // tiny solid room with a floor, one key, an exi
   const cx = X >> 1, fy = 2;
   return { dims: { X, Y, Z }, data, palette: [], entrance: [cx, fy, 4], exit: [cx, fy, Z - 4], keys: [[cx, fy, Z >> 1]], spawn: [cx, fy, 4], playerHeight: 3, sdf: null };
 }
-const TUT_TASKS = [["move", "WASD로 이동하기"], ["flash", "손전등 켜기/끄기 (좌클릭)"], ["glow", "글로우스톤 설치하기 (우클릭)"], ["key", "열쇠 줍기 (조준 + F)"], ["map", "지도 열기 (M)"]];
+const TUT_TASKS = [["move", "WASD로 이동하기"], ["flash", "손전등 켜기/끄기 (좌클릭)"], ["glow", "글로우스톤 10개 모두 설치하기 (우클릭)"], ["key", "열쇠 줍기 (조준 + F)"], ["map", "지도 열기 (M)"]];
 const tutDone = () => TUT_TASKS.every(([k]) => tut[k]);
 const tutBox = document.createElement("div");
 tutBox.style.cssText = "position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:13;display:none;font:13px/1.8 ui-monospace,monospace;color:#dfe8f5;background:rgba(12,18,30,.82);border:1px solid rgba(120,140,180,.35);border-radius:10px;padding:12px 20px;text-shadow:0 1px 2px #000;pointer-events:none;text-align:left;";
 document.body.appendChild(tutBox);
 function updateTut() {
-  if (!tutorialMode) { tutBox.style.display = "none"; return; }
+  if (!tutorialMode || introIdx >= 0) { tutBox.style.display = "none"; return; }  // hide during intro cards
   tutBox.style.display = "block";
   tutBox.innerHTML = "<b style='color:#ffd24a'>튜토리얼 — 조작법 익히기</b><br>" +
     TUT_TASKS.map(([k, t]) => (tut[k] ? "<span style='color:#5fe07a'>&#10003;</span> " : "<span style='color:#6b7689'>&#9633;</span> ") + t).join("<br>") +
@@ -239,7 +239,7 @@ let tutFinishing = false;
 async function finishTutorial() {
   if (tutFinishing) return; tutFinishing = true;
   tutBox.style.display = "none";
-  showLoading("<b>동굴로 진입 중…</b>");
+  showLoading("<b>동굴로 진입 중…</b><br><span style='font-size:15px;opacity:.9'>열쇠 조각 3개를 찾고, 출구를 찾아 탈출하세요</span>");
   const res = await fetch("./cave.json", { cache: "no-store" });
   const data = loadCaveFromJSON(await res.json());
   await delay(900);                       // let the loading screen show (min duration)
@@ -247,6 +247,43 @@ async function finishTutorial() {
   await delay(250);
   tutorialMode = false; tutFinishing = false;  // flip only after the real cave is built
   hideLoading();
+}
+
+// transient toast message
+const toastEl = document.createElement("div");
+toastEl.style.cssText = "position:fixed;bottom:86px;left:50%;transform:translateX(-50%);z-index:14;display:none;font:14px/1.5 ui-monospace,monospace;color:#fff;background:rgba(20,28,44,.9);border:1px solid rgba(255,210,74,.45);border-radius:9px;padding:10px 18px;text-align:center;pointer-events:none;text-shadow:0 1px 2px #000;max-width:560px;";
+document.body.appendChild(toastEl);
+let toastT = 0;
+function showToast(msg, ms) { toastEl.innerHTML = msg; toastEl.style.display = "block"; toastT = (ms || 3800) / 1000; }
+// F-prompt next to the crosshair (right side, doesn't block view)
+const fprompt = document.createElement("div");
+fprompt.style.cssText = "position:fixed;top:50%;left:calc(50% + 20px);transform:translateY(-50%);z-index:12;display:none;font:13px/1 ui-monospace,monospace;color:#ffd24a;background:rgba(10,14,22,.72);border:1px solid rgba(255,210,74,.5);border-radius:6px;padding:5px 9px;pointer-events:none;white-space:nowrap;text-shadow:0 1px 2px #000;";
+fprompt.textContent = "[F] 줍기";
+document.body.appendChild(fprompt);
+// tutorial intro cards (press F to advance through tool explanations)
+const INTRO = [
+  ["나침반", "좌측 하단 나침반은 <b>가장 가까운 열쇠</b>를 가리킵니다."],
+  ["손전등", "<b>좌클릭</b>으로 손전등을 켜고 끕니다. 지속시간은 <b>3분</b>뿐이니 아껴 쓰세요."],
+  ["글로우스톤", "<b>우클릭</b>으로 글로우스톤을 설치합니다. 영구히 빛나지만 <b>회수할 수 없습니다</b>."],
+  ["열쇠 조각", "크로스헤어로 조준한 뒤 <b>F</b>로 열쇠를 줍습니다. 3개를 모으면 출구가 열립니다."],
+  ["지도", "<b>M</b> 키로 지나온 길을 확인할 수 있습니다."],
+];
+const introBox = document.createElement("div");
+introBox.style.cssText = "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:22;display:none;font:16px/1.7 ui-monospace,monospace;color:#eef3fb;background:rgba(12,18,30,.95);border:1px solid rgba(120,140,180,.4);border-radius:14px;padding:26px 36px;text-align:center;max-width:560px;box-shadow:0 10px 44px rgba(0,0,0,.65);";
+document.body.appendChild(introBox);
+let introIdx = -1;
+function showIntroCard() {
+  const [t, d] = INTRO[introIdx];
+  introBox.innerHTML = `<div style="font-size:13px;color:#8fa6c4;letter-spacing:2px">조작 안내 ${introIdx + 1} / ${INTRO.length}</div>` +
+    `<div style="font-size:24px;color:#ffd24a;margin:8px 0 10px">${t}</div><div>${d}</div>` +
+    `<div style="margin-top:16px;opacity:.78;font-size:14px">넘어가려면 <b style="color:#ffd24a">F</b></div>`;
+  introBox.style.display = "block";
+}
+function startIntro() { introIdx = 0; tutBox.style.display = "none"; showIntroCard(); }
+function advanceIntro() {
+  introIdx++;
+  if (introIdx >= INTRO.length) { introIdx = -1; introBox.style.display = "none"; updateTut(); }
+  else showIntroCard();
 }
 const _dir = new THREE.Vector3(), aimRay = new THREE.Raycaster();
 const _cqInv = new THREE.Quaternion(), _kq = new THREE.Quaternion(), _UP = new THREE.Vector3(0, 1, 0);
@@ -434,12 +471,14 @@ function updateGameplay(dt, t) {
     if (tutorialMode) { if (tutDone()) finishTutorial(); else exitMsg = "먼저 모든 과제를 완료하세요!"; }
     else if (keysGot >= totalKeys) winGame();
   }
-  // prompt + crosshair emphasis when aiming at a key
-  if (started && !won && aimedKey) { banner.textContent = "[F] 열쇠 조각 줍기"; banner.style.display = "block"; }
-  else if (exitMsg) { banner.textContent = exitMsg; banner.style.display = "block"; }
-  else banner.style.display = "none";
-  if (aimedKey) { crosshair.style.transform = "scale(2.1)"; crosshair.style.background = "#ffd24a"; crosshair.style.boxShadow = "0 0 8px #ffd24a"; }
+  // F-prompt beside the crosshair when aiming at a key (banner reserved for exit msg)
+  const showF = started && !won && !lost && aimedKey && introIdx < 0;
+  fprompt.style.display = showF ? "block" : "none";
+  banner.style.display = exitMsg ? "block" : "none"; if (exitMsg) banner.textContent = exitMsg;
+  if (showF) { crosshair.style.transform = "scale(1.8)"; crosshair.style.background = "#ffd24a"; crosshair.style.boxShadow = "0 0 8px #ffd24a"; }
   else { crosshair.style.transform = "scale(1)"; crosshair.style.background = "rgba(255,255,255,0.7)"; crosshair.style.boxShadow = "none"; }
+  // toast fade
+  if (toastT > 0) { toastT -= dt; if (toastT <= 0) toastEl.style.display = "none"; }
 }
 
 // --- input -------------------------------------------------------------------
@@ -475,6 +514,7 @@ renderer.domElement.addEventListener("mousedown", (e) => {
     flashOn = !flashOn;
     flashlight.intensity = flashOn ? 11 : 0;
     updateBattery(); markTut("flash");
+    if (flashOn && !flashTipShown) { flashTipShown = true; showToast("손전등 지속시간은 3분입니다. 배터리를 고려하여 아껴 사용하세요."); }
   }
 });
 window.addEventListener("mouseup", () => { dragging = false; });
@@ -496,6 +536,7 @@ const overlay = document.getElementById("overlay");
 document.getElementById("startBtn").addEventListener("click", () => {
   overlay.style.display = "none"; started = true;
   initAudio(); startMusic(); requestLock();
+  if (tutorialMode) startIntro();
 });
 function winGame() {
   won = true; sfxWin(); document.exitPointerLock?.();
@@ -506,11 +547,12 @@ function winGame() {
 // --- interaction (F) + torch placement (right-click) ------------------------
 function tryInteract() {
   if (!started || won) return;
+  if (introIdx >= 0) { advanceIntro(); return; }   // F advances tutorial intro cards
   if (aimedKey && !aimedKey.got) collectKey(aimedKey);
 }
 function collectKey(it) {
   it.got = true; keysGot++; sfxPickup(); markTut("key");
-  scene.remove(it.group); scene.remove(it.light);
+  it.group.removeFromParent(); it.light.removeFromParent();   // keys live in worldGroup
   if (keysGot >= totalKeys && exitMesh) {
     exitMesh.material.color.set(0x4fe06a); exitMesh.material.emissive.set(0x33ff66);
     exitLight.color.set(0x55ff77);
@@ -530,7 +572,11 @@ function placeTorch() {
   const light = new THREE.PointLight(0xffe1a0, 9, 55, 1.0); light.position.copy(p).add(new THREE.Vector3(0, 0.2, 0));
   worldGroup.add(grp); worldGroup.add(light);
   torches.push({ grp, light, flame: block });   // glowstone (steady pulse)
-  torchesLeft--; sfxTorch(); computeGI(); updateHUD(); markTut("glow");   // bounce light updates GI
+  torchesLeft--; sfxTorch(); computeGI(); updateHUD();   // bounce light updates GI
+  if (tutorialMode) {
+    if (torchesLeft === 0) { markTut("glow"); showToast("글로우스톤은 회수할 수 없습니다. (10/10 모두 설치 완료)"); }
+    else showToast(`글로우스톤 설치 ${10 - torchesLeft}/10 — 10개를 모두 사용해 보세요`, 1600);
+  }
   // NOTE: each torch is a real light for now; the DDGI step replaces these with
   // a single illuminance volume (cheap + drives goblin safety).
 }
@@ -824,6 +870,7 @@ function toggleMusic() { if (!musicGain) return; musicOn = !musicOn; musicGain.g
   tutorialMode = true;                // start in the tutorial room
   buildWorld(makeTutorialCave(), true);
   updateTut();
+  if (started) startIntro();          // in case Start was clicked during loading
 })();
 
 window.addEventListener("resize", () => {
