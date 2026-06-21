@@ -242,6 +242,14 @@ totalEmissiveRadiance += vGI * diffuseColor.rgb * 2.0;
 
 *그림 6-2. DDGI 방식의 probe 격자 배치(탑다운). **3복셀 간격의 균일 격자**에서 동굴의 열린 공간에 놓인 probe(약 493개)만 활성화된다. 글로우스톤(노란 링) 주변 probe가 밝고, 빛이 복도를 따라 인접 probe로 전파되며 모퉁이를 돈다. 벽 안쪽 셀은 비활성으로 표시되지 않는다.*
 
+![실시간 GI / probe](res/realtime_ddgi.gif)
+
+*그림 6-3. 인게임 실시간 GI(P 키 probe 시각화) — 글로우스톤을 설치하면 즉시 간접광 격자가 재계산되어 빛이 주변 probe로 퍼진다.*
+
+![실시간 손전등 GI](res/realtime_gi_flashlight.gif)
+
+*그림 6-4. **움직이는 손전등의 동적 간접광** — 매 프레임 격자를 재전파하므로, 손전등이 향하는 벽에서 반사된 빛이 probe를 따라 실시간으로 이동한다.*
+
 ### 선택 이유
 
 - WebGL2에는 compute 셰이더가 없어 GPU 프로브 ray-tracing(정통 DDGI)이 무겁고 구현 리스크가 크다.
