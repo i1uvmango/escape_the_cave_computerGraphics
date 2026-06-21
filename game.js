@@ -199,6 +199,8 @@ const HP_MAX = 20; let hp = HP_MAX, regenAcc = 0, shakeT = 0;
 const goblins = []; const GOBLIN_SPEED = 1.5, GOBLIN_DETECT = 45, GOBLIN_DMG = 3;
 let goblinsAngry = false;   // unleashed when all glowstones are spent (strategic resource)
 let goblinTemplate = null, goblinClips = []; const GOBLIN_FACE = 0; // model facing offset
+let playerTemplate = null, playerClips = [], playerMats = []; // human player character (Standard Walk)
+let thirdPerson = false; const BODY_FACE = Math.PI;  // V toggles 1st/3rd person; model facing offset
 // baked indirect-GI volume (flood from glowstones) + audio timers
 let caveGeo = null, caveAGI = null, giIrr = null, giVertCell = null, giOpen = null, giDimX = 0, giDimY = 0, giDimZ = 0;
 const GI_CELL = 3; let stepT = 0, heartT = 0, growlT = 6;
@@ -405,27 +407,31 @@ function buildWorld(c, isTut = false) {
 // --- first-person controller (pointer lock + clamped look) ------------------
 const pos = new THREE.Vector3(), vel = new THREE.Vector3();
 // invisible player body: FrontSide capsule — camera sits inside it (backfaces culled → unseen in 1st person) but it casts a shadow
-let playerBody = null, playerMixer = null, playerAction = null;   // humanoid shadow caster (from the Mixamo mesh)
+let playerBody = null, playerMixer = null, playerAction = null;   // human character: shadow caster (1st) / visible body (3rd)
 function buildPlayerBody() {
   if (playerBody) { playerBody.removeFromParent(); playerBody = null; playerMixer = null; playerAction = null; }
-  if (goblinTemplate) {
-    const model = cloneSkinned(goblinTemplate);
-    model.scale.setScalar(goblinTemplate.userData.fit);
+  playerMats = [];
+  const tmpl = playerTemplate || goblinTemplate;    // prefer the human (Standard Walk); goblin as fallback
+  if (tmpl) {
+    const model = cloneSkinned(tmpl);
+    model.scale.setScalar(tmpl.userData.fit);
     model.traverse((o) => {
       if (!o.isMesh) return;
       o.frustumCulled = false; o.castShadow = true; o.receiveShadow = false;
-      o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();  // isolate from the goblins
-      for (const m of (Array.isArray(o.material) ? o.material : [o.material])) { m.colorWrite = false; m.depthWrite = false; } // shadow-only: invisible in the camera, still casts into the shadow map
+      o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();  // isolate
+      for (const m of (Array.isArray(o.material) ? o.material : [o.material])) playerMats.push(m);
     });
     playerBody = new THREE.Group(); playerBody.add(model);
     playerMixer = new THREE.AnimationMixer(model);
-    if (goblinClips.length) { playerAction = playerMixer.clipAction(goblinClips[0]); playerAction.play(); playerAction.paused = true; }
-  } else {                                          // capsule fallback if the FBX failed
+    const clips = (playerTemplate ? playerClips : goblinClips);
+    if (clips.length) { playerAction = playerMixer.clipAction(clips[0]); playerAction.play(); playerAction.paused = true; }
+  } else {                                          // capsule fallback if both FBX failed
     const cap = new THREE.Mesh(new THREE.CapsuleGeometry(0.45, 2.0, 4, 8), new THREE.MeshStandardMaterial({ color: 0x202327 }));
-    cap.material.colorWrite = false; cap.material.depthWrite = false;   // shadow-only
     cap.castShadow = true; cap.position.y = 1.45;
+    playerMats.push(cap.material);
     playerBody = new THREE.Group(); playerBody.add(cap);
   }
+  applyBodyView();                                  // 1st-person → shadow-only
   playerBody.visible = false; scene.add(playerBody);
 }
 // only the NEAREST glowstone casts a shadow (1 shadow light, cost)
@@ -448,6 +454,21 @@ const RAD = 0.4, STEP = 1.05, GRAV = 30, LOOK = 0.0022; // collision = smooth me
 const ray = new THREE.Raycaster(); ray.firstHitOnly = true;
 const DOWN = new THREE.Vector3(0, -1, 0);
 const _seg = new THREE.Line3(), _box = new THREE.Box3(), _tp = new THREE.Vector3(), _cp = new THREE.Vector3(), _push = new THREE.Vector3(), _ro = new THREE.Vector3();
+const _eu = new THREE.Euler(), _camDir = new THREE.Vector3(), _focus = new THREE.Vector3(), _tmpDir = new THREE.Vector3();
+function placeCamera() {                              // 1st-person eye, or 3rd-person behind the player
+  camera.quaternion.setFromEuler(_eu.set(pitch, yaw, 0, "YXZ"));
+  if (thirdPerson) {
+    camera.getWorldDirection(_camDir);
+    _focus.set(pos.x, pos.y + 1.8, pos.z);
+    let D = 6;
+    if (collider) { ray.set(_focus, _tmpDir.copy(_camDir).negate()); ray.far = D; const h = ray.intersectObject(collider, false)[0]; if (h) D = Math.max(1.3, h.distance - 0.3); }
+    camera.position.copy(_focus).addScaledVector(_camDir, -D);
+  } else {
+    camera.position.set(pos.x, pos.y + (PH - 0.5), pos.z);
+  }
+  headLamp.position.copy(camera.position);
+}
+function applyBodyView() { for (const m of playerMats) { m.colorWrite = thirdPerson; m.depthWrite = thirdPerson; } } // 1st = shadow-only, 3rd = visible
 
 function collideWalls() {
   if (!collider) return;
@@ -474,7 +495,6 @@ function snapGround(dt) {
   } else { vel.y -= GRAV * dt; pos.y += vel.y * dt; onGround = false; }
 }
 function updatePlayer(dt) {
-  camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, "YXZ"));
   const fwd = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, yaw, 0));
   const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
   let mx = 0, mz = 0;
@@ -496,12 +516,11 @@ function updatePlayer(dt) {
     const { X, Z } = cave.dims, vx = Math.floor(pos.x - off.x), vz = Math.floor(pos.z - off.z);
     for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { const x = vx + dx, z = vz + dz; if (x >= 0 && x < X && z >= 0 && z < Z) visited[x + z * X] = 1; }
   }
-  camera.position.set(pos.x, pos.y + (PH - 0.5), pos.z);
-  headLamp.position.copy(camera.position);
-  if (playerBody) {                                 // humanoid shadow follows the player (invisible in 1st person)
+  placeCamera();                                    // 1st/3rd person
+  if (playerBody) {                                 // human body: shadow-only (1st) or visible (3rd)
     playerBody.visible = true;
     playerBody.position.set(pos.x, pos.y, pos.z);    // model origin = feet
-    playerBody.rotation.y = yaw;                     // face look/move direction
+    playerBody.rotation.y = yaw + BODY_FACE;         // face look/move direction
     if (playerAction) playerAction.paused = len <= 0;   // walk only while moving
     if (playerMixer) playerMixer.update(dt);
   }
@@ -555,6 +574,7 @@ window.addEventListener("keydown", (e) => {
   if (!wasDown && e.code === "KeyF") tryInteract();   // fire once, not on repeat
   if (!wasDown && e.code === "KeyM") { mapOpen = !mapOpen; if (mapCanvas) mapCanvas.style.display = mapOpen ? "block" : "none"; markTut("map"); }
   if (!wasDown && e.code === "KeyP") { if (!probeMesh) buildProbeViz(); if (probeMesh) { probeMesh.visible = !probeMesh.visible; if (probeMesh.visible) updateProbeColors(); showToast(probeMesh.visible ? `GI probe 격자 표시 — ${probeCells.length}개 (동굴 공간 셀, ${GI_CELL}복셀 간격)` : "probe 표시 OFF"); } }
+  if (!wasDown && e.code === "KeyV") { thirdPerson = !thirdPerson; applyBodyView(); showToast(thirdPerson ? "3인칭 시점" : "1인칭 시점", 1200); }
   if (!wasDown && e.code === "KeyB") toggleMusic();
   if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
 });
@@ -767,6 +787,17 @@ async function loadGoblin() {
     goblinClips = obj.animations || [];
     console.log("[goblin] loaded, clips:", goblinClips.length, "fit:", obj.userData.fit.toFixed(4));
   } catch (e) { console.warn("[goblin] FBX load failed, using capsule:", e); goblinTemplate = null; }
+}
+async function loadPlayer() {
+  try {
+    const obj = await new FBXLoader().loadAsync("./Standard Walk.fbx");  // human character + walk animation
+    const box = new THREE.Box3().setFromObject(obj);
+    const h = box.max.y - box.min.y;
+    obj.userData.fit = h > 0 ? 2.7 / h : 0.01;   // scale to ~player height (2.7 units)
+    playerTemplate = obj;
+    playerClips = obj.animations || [];
+    console.log("[player] loaded, clips:", playerClips.length, "fit:", obj.userData.fit.toFixed(4));
+  } catch (e) { console.warn("[player] Standard Walk FBX failed, falling back to goblin/capsule:", e); playerTemplate = null; }
 }
 function inFlashlightView(p) {
   if (!flashOn) return false;
@@ -1006,8 +1037,8 @@ function toggleMusic() { if (!musicGain) return; musicOn = !musicOn; musicGain.g
 // --- boot --------------------------------------------------------------------
 (async function boot() {
   hud.textContent = "불러오는 중…";
-  await loadGoblin();
-  buildPlayerBody();                  // humanoid shadow caster (needs goblinTemplate)
+  await Promise.all([loadGoblin(), loadPlayer()]);
+  buildPlayerBody();                  // human player body (Standard Walk); shadow caster / 3rd-person model
   if (TUTORIAL) {                     // tutorial stage
     tutorialMode = true;
     buildWorld(makeTutorialCave(), true);
@@ -1042,9 +1073,7 @@ function animate() {
       growlT -= dt;
       if (growlT <= 0) { growlT = 4 + Math.random() * 6; if (nd < 24) sfxGrowl(0.28 * (1 - nd / 24)); } // only within range
     } else {
-      camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, "YXZ"));
-      camera.position.set(pos.x, pos.y + (PH - 0.5), pos.z);
-      headLamp.position.copy(camera.position);
+      placeCamera();
     }
     updateGameplay(dt, t);
     updateCompass();
