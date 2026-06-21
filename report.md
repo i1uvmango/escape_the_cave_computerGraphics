@@ -412,7 +412,7 @@ Attack (1초마다 3 피해, 화면 흔들림 + 피격음)
 # 빌드 도구 없음 — 정적 서버로 열기만 하면 됨
 python3 -m http.server 8000
 # 브라우저에서 http://localhost:8000/game.html  (게임)
-#               http://localhost:8000/index.html (생성기/검증 뷰어)
+#               http://localhost:8000/generator.html (생성기/검증 뷰어)
 
 # 맵 재생성(선택)
 node gen.mjs
@@ -453,7 +453,7 @@ node gen.mjs
 # 빌드 도구·번들러 없음 (plain ES modules + 정적 서버)
 python3 -m http.server 8000
 # 게임:        http://localhost:8000/game.html
-# 생성기 뷰어:  http://localhost:8000/index.html
+# 생성기 뷰어:  http://localhost:8000/generator.html
 ```
 
 ### 참고 자료

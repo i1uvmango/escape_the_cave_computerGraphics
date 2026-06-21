@@ -58,6 +58,15 @@
     .plus { color: #8fa6c4; font-weight: 700; }
     .mlabel { display: flex; align-items: center; gap: 10px; margin: 12px 0; font-size: 16px; }
     .mlabel b { font-size: 17px; }
+    #loading {
+      position: fixed; inset: 0; z-index: 40; display: none; opacity: 0; transition: opacity .4s;
+      align-items: center; justify-content: center; flex-direction: column; gap: 20px;
+      background: radial-gradient(circle at 50% 45%, #0c1018, #04060a 70%); color: #e6edf8;
+      font: 20px/1.5 ui-monospace, Menlo, monospace; letter-spacing: 1px;
+    }
+    #loading .ring { width: 48px; height: 48px; border: 4px solid rgba(255,210,74,.22); border-top-color: #ffd24a; border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading .lt b { color: #ffd24a; }
     #err { position: fixed; top: 0; left: 0; right: 0; z-index: 99; display: none;
       font: 12px/1.5 ui-monospace, monospace; color: #ffb4b4; background: rgba(60,10,10,0.92);
       padding: 8px 10px; white-space: pre-wrap; }
@@ -78,33 +87,34 @@
 </head>
 <body>
   <div id="err"></div>
+  <div id="loading"><div class="ring"></div><div class="lt"></div></div>
   <div id="crosshair"></div>
   <div id="guide">
-    <b>WASD</b> move&nbsp;·&nbsp;<b>Shift+W</b> run&nbsp;·&nbsp;<b>Space</b> jump<br>
-    <b>L-click</b> flashlight&nbsp;·&nbsp;<b>R-click</b> glowstone<br>
-    <b>F</b> grab key&nbsp;·&nbsp;<b>M</b> map&nbsp;·&nbsp;<b>B</b> music&nbsp;·&nbsp;<b>Esc</b> release
+    <b>WASD</b> 이동&nbsp;·&nbsp;<b>Shift+W</b> 달리기&nbsp;·&nbsp;<b>Space</b> 점프<br>
+    <b>좌클릭</b> 손전등&nbsp;·&nbsp;<b>우클릭</b> 글로우스톤<br>
+    <b>F</b> 열쇠&nbsp;·&nbsp;<b>M</b> 지도&nbsp;·&nbsp;<b>B</b> 음악&nbsp;·&nbsp;<b>Esc</b> 해제
   </div>
-  <div id="hud">loading…</div>
-  <div id="banner"><b>Drag</b> mouse to look · <b>WASD</b> move · <b>Shift</b> run</div>
+  <div id="hud">불러오는 중…</div>
+  <div id="banner"><b>마우스</b>로 시점 · <b>WASD</b> 이동 · <b>Shift</b> 달리기</div>
   <div id="overlay">
     <h1>ESCAPE THE CAVE</h1>
-    <div class="intro">You're trapped in a collapsed cave. Find the <span class="key">3 key fragments</span>, then reach the <span style="color:#4fe06a">exit</span>. Goblins lurk in the dark and are drawn to your flashlight — light the way, but don't get cornered.</div>
+    <div class="intro">무너진 동굴에 갇혔습니다. <span class="key">열쇠 조각 3개</span>를 모아 <span style="color:#4fe06a">출구</span>로 탈출하세요. 고블린은 어둠 속에 숨어 있다가 <b>손전등 불빛에 이끌려</b> 다가옵니다 — 빛으로 길을 밝히되 구석에 몰리지 마세요.</div>
     <div class="intro" style="color:#ffcf6a;border:1px solid rgba(255,180,80,.4);border-radius:8px;padding:8px 16px;background:rgba(60,40,10,.35)">
-      <b>TIP —</b> Your flashlight has only <b>3 minutes</b> of battery (it drains only while ON, <b>left-click</b> to toggle). Use it sparingly and light your path with <b>glowstones</b> instead.
+      <b>팁 —</b> 손전등 배터리는 <b>3분</b>뿐입니다. 켜져 있을 때만 닳고 <b>좌클릭</b>으로 켜고 끕니다. 아껴 쓰고, 길은 <b>글로우스톤</b>으로 밝히세요.
     </div>
     <div class="ctrls">
       <div>
-        <h3>KEYBOARD</h3>
-        <div class="crow"><span class="keys"><span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span></span> Move</div>
-        <div class="crow"><span class="keys"><span class="kbd">Shift</span><span class="plus">+</span><span class="kbd">W</span></span> Run</div>
-        <div class="crow"><span class="keys"><span class="kbd">Space</span></span> Jump</div>
-        <div class="crow"><span class="keys"><span class="kbd">F</span></span> Pick up key <span style="opacity:.6">(aim at it)</span></div>
-        <div class="crow"><span class="keys"><span class="kbd">M</span></span> Open map</div>
-        <div class="crow"><span class="keys"><span class="kbd">B</span></span> Music on / off</div>
-        <div class="crow"><span class="keys"><span class="kbd">Esc</span></span> Release mouse</div>
+        <h3>키보드</h3>
+        <div class="crow"><span class="keys"><span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span></span> 이동</div>
+        <div class="crow"><span class="keys"><span class="kbd">Shift</span><span class="plus">+</span><span class="kbd">W</span></span> 달리기</div>
+        <div class="crow"><span class="keys"><span class="kbd">Space</span></span> 점프</div>
+        <div class="crow"><span class="keys"><span class="kbd">F</span></span> 열쇠 줍기 <span style="opacity:.6">(조준)</span></div>
+        <div class="crow"><span class="keys"><span class="kbd">M</span></span> 지도 열기</div>
+        <div class="crow"><span class="keys"><span class="kbd">B</span></span> 음악 켜기/끄기</div>
+        <div class="crow"><span class="keys"><span class="kbd">Esc</span></span> 마우스 해제</div>
       </div>
       <div>
-        <h3>MOUSE</h3>
+        <h3>마우스</h3>
         <svg width="118" height="172" viewBox="0 0 118 172" style="display:block;margin:0 auto 6px">
           <defs><clipPath id="mc"><rect x="14" y="6" width="90" height="160" rx="44"/></clipPath></defs>
           <rect x="14" y="6" width="90" height="160" rx="44" fill="#1c2333" stroke="#8b97ab" stroke-width="2.5"/>
@@ -116,14 +126,14 @@
           <line x1="14" y1="64" x2="104" y2="64" stroke="#8b97ab" stroke-width="2"/>
           <rect x="54" y="20" width="10" height="24" rx="5" fill="#1c2333" stroke="#8b97ab" stroke-width="1.5"/>
         </svg>
-        <div class="mlabel"><span style="color:#ffd24a;font-size:20px">●</span> <b style="color:#ffd24a">Left</b> — Flashlight on/off</div>
-        <div class="mlabel"><span style="color:#5fd0ff;font-size:20px">●</span> <b style="color:#5fd0ff">Right</b> — Place glowstone</div>
-        <div class="mlabel"><span style="color:#aab;font-size:20px">↔</span> <b>Move</b> — Look around</div>
+        <div class="mlabel"><span style="color:#ffd24a;font-size:20px">●</span> <b style="color:#ffd24a">왼쪽</b> — 손전등 켜기/끄기</div>
+        <div class="mlabel"><span style="color:#5fd0ff;font-size:20px">●</span> <b style="color:#5fd0ff">오른쪽</b> — 글로우스톤 설치</div>
+        <div class="mlabel"><span style="color:#aab;font-size:20px">↔</span> <b>움직이기</b> — 시점 회전</div>
       </div>
     </div>
-    <div style="opacity:.7;font-size:13px">Compass (bottom-left) points to the nearest key — it turns green toward the exit once you can leave.</div>
-    <button id="startBtn">Click to Start</button>
+    <div style="opacity:.7;font-size:13px">나침반(좌하단)은 가장 가까운 열쇠를 가리킵니다. 열쇠를 모두 모으면 초록색으로 출구를 가리킵니다.</div>
+    <button id="startBtn">시작하기</button>
   </div>
-  <script type="module" src="./game.js?v=tut1"></script>
+  <script type="module" src="./game.js?v=kr1"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@ You're trapped in a collapsed cave: manage your **light**, collect **3 key fragm
 
 ## ▶ Play in the browser
 
-**https://i1uvmango.github.io/escape_the_cave_computerGraphics/game.html**
+**https://i1uvmango.github.io/escape_the_cave_computerGraphics/**
 
 > If the link 404s, the owner must enable GitHub Pages once:
 > repo **Settings → Pages → Source = `main` branch / `/ (root)`**, then wait ~1 min.
@@ -39,7 +39,7 @@ No build tools — plain ES modules + a static server:
 ```bash
 python3 -m http.server 8000
 # Game:            http://localhost:8000/game.html
-# Generator tool:  http://localhost:8000/index.html
+# Generator tool:  http://localhost:8000/generator.html
 ```
 
 ## Report

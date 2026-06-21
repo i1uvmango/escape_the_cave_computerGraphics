@@ -217,7 +217,7 @@ function makeTutorialCave() {   // tiny solid room with a floor, one key, an exi
   const cx = X >> 1, fy = 2;
   return { dims: { X, Y, Z }, data, palette: [], entrance: [cx, fy, 4], exit: [cx, fy, Z - 4], keys: [[cx, fy, Z >> 1]], spawn: [cx, fy, 4], playerHeight: 3, sdf: null };
 }
-const TUT_TASKS = [["move", "Move with WASD"], ["flash", "Toggle flashlight (Left-click)"], ["glow", "Place a glowstone (Right-click)"], ["key", "Pick up the key (aim + F)"], ["map", "Open the map (M)"]];
+const TUT_TASKS = [["move", "WASD로 이동하기"], ["flash", "손전등 켜기/끄기 (좌클릭)"], ["glow", "글로우스톤 설치하기 (우클릭)"], ["key", "열쇠 줍기 (조준 + F)"], ["map", "지도 열기 (M)"]];
 const tutDone = () => TUT_TASKS.every(([k]) => tut[k]);
 const tutBox = document.createElement("div");
 tutBox.style.cssText = "position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:13;display:none;font:13px/1.8 ui-monospace,monospace;color:#dfe8f5;background:rgba(12,18,30,.82);border:1px solid rgba(120,140,180,.35);border-radius:10px;padding:12px 20px;text-shadow:0 1px 2px #000;pointer-events:none;text-align:left;";
@@ -225,18 +225,28 @@ document.body.appendChild(tutBox);
 function updateTut() {
   if (!tutorialMode) { tutBox.style.display = "none"; return; }
   tutBox.style.display = "block";
-  tutBox.innerHTML = "<b style='color:#ffd24a'>TUTORIAL — learn the controls</b><br>" +
+  tutBox.innerHTML = "<b style='color:#ffd24a'>튜토리얼 — 조작법 익히기</b><br>" +
     TUT_TASKS.map(([k, t]) => (tut[k] ? "<span style='color:#5fe07a'>&#10003;</span> " : "<span style='color:#6b7689'>&#9633;</span> ") + t).join("<br>") +
-    (tutDone() ? "<br><b style='color:#5fe07a'>All done! Walk into the green exit &#8594; enter the cave.</b>" : "");
+    (tutDone() ? "<br><b style='color:#5fe07a'>완료! 초록 출구로 들어가면 동굴로 진입합니다.</b>" : "");
 }
 const markTut = (k) => { if (tutorialMode && !tut[k]) { tut[k] = true; updateTut(); } };
+// loading screen
+const loadingEl = document.getElementById("loading"), loadingTxt = loadingEl.querySelector(".lt");
+function showLoading(html) { loadingTxt.innerHTML = html; loadingEl.style.display = "flex"; requestAnimationFrame(() => { loadingEl.style.opacity = "1"; }); }
+function hideLoading() { loadingEl.style.opacity = "0"; setTimeout(() => { loadingEl.style.display = "none"; }, 400); }
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 let tutFinishing = false;
 async function finishTutorial() {
   if (tutFinishing) return; tutFinishing = true;
   tutBox.style.display = "none";
+  showLoading("<b>동굴로 진입 중…</b>");
   const res = await fetch("./cave.json", { cache: "no-store" });
-  buildWorld(loadCaveFromJSON(await res.json()), false);  // clears tutorial, builds the cave
-  tutorialMode = false; tutFinishing = false;             // flip only after the real cave is built
+  const data = loadCaveFromJSON(await res.json());
+  await delay(900);                       // let the loading screen show (min duration)
+  buildWorld(data, false);                // clears tutorial, builds the cave (blocking)
+  await delay(250);
+  tutorialMode = false; tutFinishing = false;  // flip only after the real cave is built
+  hideLoading();
 }
 const _dir = new THREE.Vector3(), aimRay = new THREE.Raycaster();
 const _cqInv = new THREE.Quaternion(), _kq = new THREE.Quaternion(), _UP = new THREE.Vector3(0, 1, 0);
@@ -402,8 +412,8 @@ function updatePlayer(dt) {
 const hud = document.getElementById("hud"), banner = document.getElementById("banner"), crosshair = document.getElementById("crosshair");
 crosshair.style.transition = "transform .08s, background .08s";
 function updateHUD() {
-  hud.innerHTML = `<b>Keys</b> ${keysGot}/${totalKeys} &nbsp; <b>Glowstones</b> ${torchesLeft}/10`
-    + (keysGot >= totalKeys ? ` &nbsp; <span style="color:#4fe06a">Exit open — reach it!</span>` : ` &nbsp; find the key fragments`);
+  hud.innerHTML = `<b>열쇠</b> ${keysGot}/${totalKeys} &nbsp; <b>글로우스톤</b> ${torchesLeft}/10`
+    + (keysGot >= totalKeys ? ` &nbsp; <span style="color:#4fe06a">출구 열림 — 출구로!</span>` : ` &nbsp; 열쇠 조각을 찾으세요`);
 }
 function updateGameplay(dt, t) {
   // keys spin/bob
@@ -421,11 +431,11 @@ function updateGameplay(dt, t) {
   // reaching the exit: tutorial -> next stage (all tasks done), else -> win
   let exitMsg = "";
   if (!won && !lost && pos.distanceTo(exitPos) < 3.2) {
-    if (tutorialMode) { if (tutDone()) finishTutorial(); else exitMsg = "Finish all tutorial tasks first!"; }
+    if (tutorialMode) { if (tutDone()) finishTutorial(); else exitMsg = "먼저 모든 과제를 완료하세요!"; }
     else if (keysGot >= totalKeys) winGame();
   }
   // prompt + crosshair emphasis when aiming at a key
-  if (started && !won && aimedKey) { banner.textContent = "[F] Pick up key fragment"; banner.style.display = "block"; }
+  if (started && !won && aimedKey) { banner.textContent = "[F] 열쇠 조각 줍기"; banner.style.display = "block"; }
   else if (exitMsg) { banner.textContent = exitMsg; banner.style.display = "block"; }
   else banner.style.display = "none";
   if (aimedKey) { crosshair.style.transform = "scale(2.1)"; crosshair.style.background = "#ffd24a"; crosshair.style.boxShadow = "0 0 8px #ffd24a"; }
@@ -489,7 +499,7 @@ document.getElementById("startBtn").addEventListener("click", () => {
 });
 function winGame() {
   won = true; sfxWin(); document.exitPointerLock?.();
-  overlay.innerHTML = `<h1>YOU ESCAPED! 🎉</h1><div>All <span class="key">${totalKeys}</span> key fragments collected · exit reached.</div><button onclick="location.reload()">Play again</button>`;
+  overlay.innerHTML = `<h1 style="color:#ffe9a8">탈출 성공!</h1><div>열쇠 조각 <span class="key">${totalKeys}</span>개를 모두 모아 탈출했습니다.</div><button onclick="location.reload()">다시 하기</button>`;
   overlay.style.display = "flex";
 }
 
@@ -549,7 +559,7 @@ function updateBattery() {
   const pct = battery / BATTERY_MAX;
   batFill.style.width = (pct * 100) + "%";
   batFill.style.background = pct < 0.17 ? "#ff4040" : (pct < 0.34 ? "#ffae3a" : "linear-gradient(90deg,#ffd24a,#ffc23a)");
-  batTxt.textContent = `${Math.floor(battery / 60)}:${String(Math.floor(battery % 60)).padStart(2, "0")}` + (battery <= 0 ? " DEAD" : flashOn ? " (ON)" : " (off)");
+  batTxt.textContent = `${Math.floor(battery / 60)}:${String(Math.floor(battery % 60)).padStart(2, "0")}` + (battery <= 0 ? " 방전" : flashOn ? " (켜짐)" : " (꺼짐)");
 }
 
 // hurt flash (red vignette)
@@ -684,7 +694,7 @@ function updateGoblins(dt) {
 }
 function loseGame() {
   if (won) return; lost = true; sfxLose(); document.exitPointerLock?.();
-  overlay.innerHTML = `<h1 style="color:#ff6a6a">YOU DIED</h1><div>The goblins took you in the dark.</div><button onclick="location.reload()">Try again</button>`;
+  overlay.innerHTML = `<h1 style="color:#ff6a6a">사망</h1><div>어둠 속에서 고블린에게 당했습니다.</div><button onclick="location.reload()">다시 하기</button>`;
   overlay.style.display = "flex";
 }
 function updateCompass() {
@@ -809,7 +819,7 @@ function toggleMusic() { if (!musicGain) return; musicOn = !musicOn; musicGain.g
 
 // --- boot --------------------------------------------------------------------
 (async function boot() {
-  hud.textContent = "loading…";
+  hud.textContent = "불러오는 중…";
   await loadGoblin();                 // ready for the real cave later
   tutorialMode = true;                // start in the tutorial room
   buildWorld(makeTutorialCave(), true);
