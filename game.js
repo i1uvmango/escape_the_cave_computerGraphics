@@ -752,7 +752,7 @@ function spawnGoblins(n) {
     if (goblinTemplate) {
       const model = cloneSkinned(goblinTemplate);
       model.scale.setScalar(goblinTemplate.userData.fit);
-      model.traverse((o) => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = true; } });
+      model.traverse((o) => { if (o.isMesh) { o.frustumCulled = true; o.castShadow = false; } }); // perf: cull off-screen + no skinned shadow passes
       g.add(model);
       mixer = new THREE.AnimationMixer(model);
       if (goblinClips.length) { action = mixer.clipAction(goblinClips[0]); action.play(); action.paused = true; }
