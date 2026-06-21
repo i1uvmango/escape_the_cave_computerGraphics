@@ -655,7 +655,7 @@ function placeTorch() {
   const light = new THREE.PointLight(0xffe1a0, 9, 55, 1.0); light.position.copy(p).add(new THREE.Vector3(0, 0.2, 0));
   worldGroup.add(grp); worldGroup.add(light);
   torches.push({ grp, light, flame: block });   // glowstone (steady pulse)
-  torchesLeft--; sfxTorch(); giDirty = DDGI_BURST; updateHUD();   // static GI re-converges (only this new glowstone matters)
+  torchesLeft--; sfxTorch(); rebuildActiveProbes(); giDirty = DDGI_BURST; updateHUD();   // re-trace only probes near a glowstone
   if (torchesLeft === 0) {
     if (tutorialMode) { markTut("glow"); showToast("글로우스톤을 모두 소진했습니다 (회수 불가). 본게임에서는 다 쓰면 <b>고블린이 깨어나 공격</b>하니 전략적으로 사용하세요!", 5500); }
     else { goblinsAngry = true; showToast("⚠ 글로우스톤 소진 — <b>고블린이 깨어나 공격을 시작합니다!</b>", 6000); }
@@ -881,7 +881,7 @@ function giCell(wx, wy, wz) {
 // ===== DDGI: probe grid + BVH ray-traced irradiance + temporal accumulation =====
 const DDGI_RAYS = 12, DDGI_REFRESH = 14, DDGI_BURST = 56;  // STATIC GI burst: fewer rays + more frame-spread to avoid placement-frame lag spikes
 const DDGI_TGT = 55, FLASH_GI = 0.85, FLASH_GI_RANGE = 100; // dynamic flashlight indirect (NOT DDGI — a cheap real-time injection trick)
-let ddgiDirs = null, giProbes = null, giCursor = 0, giDirty = 0;  // giDirty = frames left to converge the static grid
+let ddgiDirs = null, giProbes = null, giCursor = 0, giDirty = 0, giActive = [];  // giActive = probe indices near a glowstone (only these are re-traced)
 let giFlash = null, flashWasOn = false;            // per-frame flashlight indirect, added on top of the static glowstone GI
 const _rc = new THREE.Raycaster(); _rc.firstHitOnly = true;
 const _pO = new THREE.Vector3(), _rd = new THREE.Vector3(), _hn = new THREE.Vector3();
@@ -894,7 +894,7 @@ function buildDDGI() {
     const ci = cx + cy * W + cz * W * H; if (!giOpen[ci]) continue;
     giProbes.push(ci, cx * GI_CELL + half + off.x + 0.5, cy * GI_CELL + half + off.y + 0.5, cz * GI_CELL + half + off.z + 0.5);
   }
-  giCursor = 0;
+  giCursor = 0; giActive.length = 0;
   giFlash = new Float32Array(giIrr.length);
   for (let i = 0; i < giIrr.length; i += 3) { giIrr[i] = 0.016; giIrr[i + 1] = 0.02; giIrr[i + 2] = 0.028; } // ambient floor
 }
@@ -949,11 +949,20 @@ function gatherProbe(idx) {                          // STATIC GI: trace rays, g
   }
   giIrr[ci * 3] += (ar - giIrr[ci * 3]) * a; giIrr[ci * 3 + 1] += (ag - giIrr[ci * 3 + 1]) * a; giIrr[ci * 3 + 2] += (ab - giIrr[ci * 3 + 2]) * a;
 }
-function ddgiTick() {                                // amortized: refresh a slice of static probes (bake happens per-frame)
+function rebuildActiveProbes() {                     // only probes within range of SOME glowstone need tracing
+  giActive.length = 0; giCursor = 0;
+  if (!giProbes) return;
+  const count = giProbes.length / 4, R2 = (DDGI_TGT + 62) * (DDGI_TGT + 62);
+  for (let i = 0; i < count; i++) {
+    const px = giProbes[i * 4 + 1], py = giProbes[i * 4 + 2], pz = giProbes[i * 4 + 3];
+    for (const tr of torches) { const lp = tr.light.position, dx = lp.x - px, dy = lp.y - py, dz = lp.z - pz; if (dx * dx + dy * dy + dz * dz < R2) { giActive.push(i); break; } }
+  }
+}
+function ddgiTick() {                                // refresh a slice of ACTIVE probes only (bake happens per-frame)
   if (!giProbes || !collider || !giIrr) return;
-  const total = giProbes.length / 4; if (!total) return;
+  const total = giActive.length; if (!total) return;
   const slice = Math.ceil(total / DDGI_REFRESH);
-  for (let s = 0; s < slice; s++) { gatherProbe(giCursor); giCursor = (giCursor + 1) % total; }
+  for (let s = 0; s < slice; s++) { gatherProbe(giActive[giCursor]); giCursor = (giCursor + 1) % total; }
 }
 function buildVertCellMap() {   // vertex→probe-cell is static (geometry fixed) → compute once
   if (!caveGeo || !giOpen) return;
