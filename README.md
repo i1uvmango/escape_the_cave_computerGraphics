@@ -14,7 +14,7 @@ You're trapped in a collapsed cave: manage your **light**, collect **3 key fragm
 
 - **Procedural voxel cave** (room + corridor carving), guaranteed walkable, baked to `cave.json`.
 - **Surface Nets** smooth mesh from the voxel grid + **triplanar PBR** (Rock035, CC0).
-- **Real-time indirect lighting (GI)** — glowstones flood light through the cave so it bounces **around corners**.
+- **Real-time DDGI** — irradiance probe grid ray-traced against the cave **BVH** (mesh + three-mesh-bvh), so glowstone/flashlight light bounces **around corners**.
 - **Mixamo goblins** (FBX walk animation) that are **drawn to your flashlight** and attack in the dark.
 - Flashlight **battery (3 min)**, placeable **glowstones**, hearts, compass, explored-route **map**, and a **tutorial stage**.
 

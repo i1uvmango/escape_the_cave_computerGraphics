@@ -395,7 +395,7 @@ function buildWorld(c, isTut = false) {
   hp = HP_MAX; updateHearts(); spawnGoblins(isTut ? 0 : 4);
   battery = BATTERY_MAX; flashOn = true; flashlight.intensity = 11; updateBattery();   // reset flashlight
   visited = new Uint8Array(c.dims.X * c.dims.Z);   // fog-of-war for the map
-  setupGI(); computeGI();   // initial indirect GI (ambient only until glowstones placed)
+  setupGI(); bakeGIToVertices();   // DDGI probe grid built; ambient until rays accumulate
   updateHUD();
 }
 
@@ -588,7 +588,7 @@ function placeTorch() {
   const light = new THREE.PointLight(0xffe1a0, 9, 55, 1.0); light.position.copy(p).add(new THREE.Vector3(0, 0.2, 0));
   worldGroup.add(grp); worldGroup.add(light);
   torches.push({ grp, light, flame: block });   // glowstone (steady pulse)
-  torchesLeft--; sfxTorch(); computeGI(); updateHUD();   // bounce light updates GI
+  torchesLeft--; sfxTorch(); if (collider) ddgiTick(); updateHUD();   // DDGI picks up the new glowstone
   if (torchesLeft === 0) {
     if (tutorialMode) { markTut("glow"); showToast("글로우스톤을 모두 소진했습니다 (회수 불가). 본게임에서는 다 쓰면 <b>고블린이 깨어나 공격</b>하니 전략적으로 사용하세요!", 5500); }
     else { goblinsAngry = true; showToast("⚠ 글로우스톤 소진 — <b>고블린이 깨어나 공격을 시작합니다!</b>", 6000); }
@@ -789,6 +789,7 @@ function setupGI() {
     const x = Math.min(X - 1, cx * GI_CELL + 1), y = Math.min(Y - 1, cy * GI_CELL + 1), z = Math.min(Z - 1, cz * GI_CELL + 1);
     giOpen[cx + cy * giDimX + cz * giDimX * giDimY] = isOpen(d[idx(x, y, z)]) ? 1 : 0;
   }
+  buildDDGI();
 }
 function giCell(wx, wy, wz) {
   const vx = Math.floor(wx - off.x), vy = Math.floor(wy - off.y), vz = Math.floor(wz - off.z);
@@ -797,42 +798,79 @@ function giCell(wx, wy, wz) {
   const cz = Math.max(0, Math.min(giDimZ - 1, (vz / GI_CELL) | 0));
   return cx + cy * giDimX + cz * giDimX * giDimY;
 }
-function computeGI() {
-  if (!giIrr) return;
-  const W = giDimX, H = giDimY, D = giDimZ, n = W * H * D;
-  for (let i = 0; i < n; i++) { giIrr[i * 3] = 0.016; giIrr[i * 3 + 1] = 0.02; giIrr[i * 3 + 2] = 0.028; } // ambient floor
-  for (const tr of torches) { const ci = giCell(tr.grp.position.x, tr.grp.position.y, tr.grp.position.z); giIrr[ci * 3] += 1.5; giIrr[ci * 3 + 1] += 1.2; giIrr[ci * 3 + 2] += 0.65; }
-  // dynamic flashlight as a GI source (moving light → recomputed every frame)
-  if (flashOn && battery > 0 && collider) {
-    camera.getWorldDirection(_dir);
-    aimRay.set(camera.position, _dir); aimRay.far = 40;
-    const hit = aimRay.intersectObject(collider, false)[0];
-    const p = hit ? hit.point : _giP.copy(camera.position).addScaledVector(_dir, 12);
-    const ci = giCell(p.x, p.y, p.z); giIrr[ci * 3] += 1.2; giIrr[ci * 3 + 1] += 1.05; giIrr[ci * 3 + 2] += 0.85;
-    const cp = giCell(camera.position.x, camera.position.y, camera.position.z); giIrr[cp * 3] += 0.45; giIrr[cp * 3 + 1] += 0.42; giIrr[cp * 3 + 2] += 0.4;
+// ===== DDGI: probe grid + BVH ray-traced irradiance + temporal accumulation =====
+const DDGI_RAYS = 24, DDGI_REFRESH = 8;            // full-grid refresh every 8 frames
+const DDGI_TGT = 55, FLASH_RANGE = 60, FLASH_COS = 0.70;
+let ddgiDirs = null, giProbes = null, giCursor = 0;
+const _rc = new THREE.Raycaster(); _rc.firstHitOnly = true;
+const _pO = new THREE.Vector3(), _rd = new THREE.Vector3(), _hn = new THREE.Vector3(), _beam = new THREE.Vector3();
+function buildDDGI() {
+  ddgiDirs = [];                                    // Fibonacci-sphere ray directions
+  const N = DDGI_RAYS, GA = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < N; i++) { const y = 1 - ((i + 0.5) / N) * 2, r = Math.sqrt(Math.max(0, 1 - y * y)), th = GA * i; ddgiDirs.push(new THREE.Vector3(Math.cos(th) * r, y, Math.sin(th) * r)); }
+  giProbes = []; const W = giDimX, H = giDimY, D = giDimZ, half = GI_CELL / 2;  // active (in-cave) probe world centers
+  for (let cz = 0; cz < D; cz++) for (let cy = 0; cy < H; cy++) for (let cx = 0; cx < W; cx++) {
+    const ci = cx + cy * W + cz * W * H; if (!giOpen[ci]) continue;
+    giProbes.push(ci, cx * GI_CELL + half + off.x + 0.5, cy * GI_CELL + half + off.y + 0.5, cz * GI_CELL + half + off.z + 0.5);
   }
-  if (!giTmp || giTmp.length !== giIrr.length) giTmp = new Float32Array(giIrr.length);
-  const tmp = giTmp, nb = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], decay = 0.8;
-  for (let it = 0; it < 9; it++) {                 // propagate around corners
-    tmp.set(giIrr);
-    for (let cz = 0; cz < D; cz++) for (let cy = 0; cy < H; cy++) for (let cx = 0; cx < W; cx++) {
-      const ci = cx + cy * W + cz * W * H; if (!giOpen[ci]) continue;
-      let r = giIrr[ci * 3], g = giIrr[ci * 3 + 1], b = giIrr[ci * 3 + 2];
-      for (const [dx, dy, dz] of nb) {
-        const nx = cx + dx, ny = cy + dy, nz = cz + dz; if (nx < 0 || nx >= W || ny < 0 || ny >= H || nz < 0 || nz >= D) continue;
-        const ni = nx + ny * W + nz * W * H; if (!giOpen[ni]) continue;
-        r = Math.max(r, giIrr[ni * 3] * decay); g = Math.max(g, giIrr[ni * 3 + 1] * decay); b = Math.max(b, giIrr[ni * 3 + 2] * decay);
-      }
-      tmp[ci * 3] = r; tmp[ci * 3 + 1] = g; tmp[ci * 3 + 2] = b;
+  giCursor = 0;
+  for (let i = 0; i < giIrr.length; i += 3) { giIrr[i] = 0.016; giIrr[i + 1] = 0.02; giIrr[i + 2] = 0.028; } // ambient floor
+}
+function occluded(px, py, pz, tx, ty, tz, dist) {   // shadow ray via BVH
+  _rd.set(tx - px, ty - py, tz - pz).normalize();
+  _pO.set(px, py, pz).addScaledVector(_rd, 0.15);
+  _rc.set(_pO, _rd); _rc.far = dist - 0.3;
+  return _rc.intersectObject(collider, false).length > 0;
+}
+function gatherProbe(idx) {                          // trace DDGI_RAYS rays; gather direct light at the hits
+  const ci = giProbes[idx * 4], px = giProbes[idx * 4 + 1], py = giProbes[idx * 4 + 2], pz = giProbes[idx * 4 + 3];
+  let ar = 0.016, ag = 0.02, ab = 0.028; const inv = 1 / DDGI_RAYS;
+  const fOn = flashOn && battery > 0; if (fOn) camera.getWorldDirection(_beam);
+  for (let k = 0; k < DDGI_RAYS; k++) {
+    _pO.set(px, py, pz); _rc.set(_pO, ddgiDirs[k]); _rc.far = 60;
+    const h = _rc.intersectObject(collider, false)[0]; if (!h) continue;
+    const hp = h.point; _hn.copy(h.face ? h.face.normal : ddgiDirs[k]);
+    if (_hn.dot(ddgiDirs[k]) > 0) _hn.negate();      // orient surface normal back toward the probe (lit side)
+    let r = 0, g = 0, b = 0;
+    for (const tr of torches) {                      // glowstone bounce
+      const lp = tr.light.position, dx = lp.x - hp.x, dy = lp.y - hp.y, dz = lp.z - hp.z, dd = Math.hypot(dx, dy, dz);
+      if (dd > DDGI_TGT || dd < 0.05) continue;
+      const ndl = Math.max(0, (dx * _hn.x + dy * _hn.y + dz * _hn.z) / dd); if (ndl <= 0) continue;
+      if (occluded(hp.x, hp.y, hp.z, lp.x, lp.y, lp.z, dd)) continue;
+      const at = 1 - dd / DDGI_TGT, e = at * at * ndl * 1.8;
+      r += tr.light.color.r * e; g += tr.light.color.g * e; b += tr.light.color.b * e;
     }
-    giIrr.set(tmp);
+    if (fOn) {                                       // dynamic flashlight bounce (cone from camera)
+      const lp = camera.position, dx = lp.x - hp.x, dy = lp.y - hp.y, dz = lp.z - hp.z, dd = Math.hypot(dx, dy, dz);
+      if (dd < FLASH_RANGE && dd > 0.05 && (-dx * _beam.x - dy * _beam.y - dz * _beam.z) / dd > FLASH_COS) {
+        const ndl = Math.max(0, (dx * _hn.x + dy * _hn.y + dz * _hn.z) / dd);
+        if (ndl > 0 && !occluded(hp.x, hp.y, hp.z, lp.x, lp.y, lp.z, dd)) {
+          const at = 1 - dd / FLASH_RANGE, e = at * at * ndl * 2.0;
+          r += 1.0 * e; g += 0.95 * e; b += 0.85 * e;
+        }
+      }
+    }
+    ar += r * inv; ag += g * inv; ab += b * inv;
   }
+  const a = 0.3;                                      // temporal blend toward the new estimate
+  giIrr[ci * 3] += (ar - giIrr[ci * 3]) * a; giIrr[ci * 3 + 1] += (ag - giIrr[ci * 3 + 1]) * a; giIrr[ci * 3 + 2] += (ab - giIrr[ci * 3 + 2]) * a;
+}
+function ddgiTick() {                                // amortized: refresh a slice of probes each frame, then bake
+  if (!giProbes || !collider || !giIrr) return;
+  const total = giProbes.length / 4; if (!total) return;
+  const slice = Math.ceil(total / DDGI_REFRESH);
+  for (let s = 0; s < slice; s++) { gatherProbe(giCursor); giCursor = (giCursor + 1) % total; }
   bakeGIToVertices();
 }
 function bakeGIToVertices() {
-  if (!caveGeo || !caveAGI) return;
-  const p = caveGeo.getAttribute("position");
-  for (let i = 0; i < p.count; i++) { const ci = giCell(p.getX(i), p.getY(i), p.getZ(i)); caveAGI[i * 3] = giIrr[ci * 3]; caveAGI[i * 3 + 1] = giIrr[ci * 3 + 1]; caveAGI[i * 3 + 2] = giIrr[ci * 3 + 2]; }
+  if (!caveGeo || !caveAGI || !giIrr) return;
+  const p = caveGeo.getAttribute("position"), nm = caveGeo.getAttribute("normal"), s = GI_CELL * 0.8;
+  for (let i = 0; i < p.count; i++) {
+    // sample the probe just inside the cave (offset along the surface normal) so wall verts read a lit probe
+    let ci = giCell(p.getX(i) + nm.getX(i) * s, p.getY(i) + nm.getY(i) * s, p.getZ(i) + nm.getZ(i) * s);
+    if (!giOpen[ci]) ci = giCell(p.getX(i), p.getY(i), p.getZ(i));
+    caveAGI[i * 3] = giIrr[ci * 3]; caveAGI[i * 3 + 1] = giIrr[ci * 3 + 1]; caveAGI[i * 3 + 2] = giIrr[ci * 3 + 2];
+  }
   caveGeo.getAttribute("aGI").needsUpdate = true;
   if (probeMesh && probeMesh.visible) updateProbeColors();   // keep probe colors live
 }
@@ -952,7 +990,7 @@ function animate() {
       if (flashOn) { battery -= dt; if (battery <= 0) { battery = 0; flashOn = false; flashlight.intensity = 0; } }
       updateBattery();
       updatePlayer(dt);
-      if (collider) computeGI();        // dynamic GI every frame (flashlight + glowstones)
+      if (collider) ddgiTick();         // DDGI: ray-traced probes (flashlight + glowstones)
       updateGoblins(dt);
       if (hp < HP_MAX) { regenAcc += dt; if (regenAcc >= 30) { regenAcc -= 30; hp = Math.min(HP_MAX, hp + 2); updateHearts(); } } // +1 heart / 30s
       // danger audio: heartbeat when a goblin is near, occasional distant growl
