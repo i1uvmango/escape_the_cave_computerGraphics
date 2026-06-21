@@ -95,6 +95,7 @@ const ROCK = {
   normal: loadTex(TEXP + "NormalGL.jpg", false),
   rough: loadTex(TEXP + "Roughness.jpg", false),
 };
+const giViewUniform = { value: 0 };   // GI visualization toggle (G key)
 function makeRockMaterial() {
   const mat = new THREE.MeshStandardMaterial({
     map: ROCK.color, roughnessMap: ROCK.rough, normalMap: ROCK.normal,
@@ -102,13 +103,14 @@ function makeRockMaterial() {
   });
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uTri = { value: 0.18 };
+    sh.uniforms.uGIView = giViewUniform;
     sh.vertexShader = sh.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vWP; varying vec3 vWN; varying vec3 vGI; attribute vec3 aGI;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\n vWP = (modelMatrix * vec4(transformed,1.0)).xyz; vGI = aGI;")
       .replace("#include <beginnormal_vertex>", "#include <beginnormal_vertex>\n vWN = normalize(mat3(modelMatrix) * objectNormal);");
     sh.fragmentShader = sh.fragmentShader
       .replace("#include <roughnessmap_pars_fragment>",
-        "#include <roughnessmap_pars_fragment>\nuniform float uTri; varying vec3 vWP; varying vec3 vWN; varying vec3 vGI;\n" +
+        "#include <roughnessmap_pars_fragment>\nuniform float uTri; uniform float uGIView; varying vec3 vWP; varying vec3 vWN; varying vec3 vGI;\n" +
         "vec4 triS(sampler2D s){ vec3 b=pow(abs(vWN),vec3(2.0)); b/=max(dot(b,vec3(1.0)),1e-4);\n" +
         " return texture2D(s,vWP.zy*uTri)*b.x+texture2D(s,vWP.xz*uTri)*b.y+texture2D(s,vWP.xy*uTri)*b.z; }\n" +
         "vec3 triN(){ vec3 b=pow(abs(vWN),vec3(2.0)); b/=max(dot(b,vec3(1.0)),1e-4);\n" +
@@ -119,7 +121,9 @@ function makeRockMaterial() {
       .replace("#include <roughnessmap_fragment>", "float roughnessFactor = roughness * triS(roughnessMap).g;")
       .replace("#include <normal_fragment_maps>", "normal = triN();")
       // baked indirect GI (glowstone bounce), added as light tinted by albedo
-      .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n totalEmissiveRadiance += vGI * diffuseColor.rgb * 2.0;");
+      .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n totalEmissiveRadiance += vGI * diffuseColor.rgb * 2.0;")
+      // GI visualization: when on, show ONLY the baked indirect light (G key)
+      .replace("#include <opaque_fragment>", "#include <opaque_fragment>\n if (uGIView > 0.5) gl_FragColor = vec4(vGI * 8.0, 1.0);");
   };
   return mat;
 }
@@ -202,6 +206,7 @@ const GI_CELL = 3; let stepT = 0, heartT = 0, growlT = 6;
 let visited = null, mapOpen = false, mapCanvas = null;   // explored-route map (M)
 // tutorial stage: practice controls in a small room before the real cave
 let worldGroup = new THREE.Group(); scene.add(worldGroup);
+const TUTORIAL = false;          // set true to play the tutorial stage first
 let tutorialMode = false;
 const tut = { move: false, flash: false, glow: false, key: false, map: false };
 function clearWorld() {
@@ -504,6 +509,7 @@ window.addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (!wasDown && e.code === "KeyF") tryInteract();   // fire once, not on repeat
   if (!wasDown && e.code === "KeyM") { mapOpen = !mapOpen; if (mapCanvas) mapCanvas.style.display = mapOpen ? "block" : "none"; markTut("map"); }
+  if (!wasDown && e.code === "KeyG") { giViewUniform.value = giViewUniform.value > 0.5 ? 0 : 1; showToast(giViewUniform.value ? "GI 시각화 ON — 간접광만 표시 (글로우스톤을 놓아보세요)" : "GI 시각화 OFF"); }
   if (!wasDown && e.code === "KeyB") toggleMusic();
   if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
 });
@@ -878,11 +884,16 @@ function toggleMusic() { if (!musicGain) return; musicOn = !musicOn; musicGain.g
 // --- boot --------------------------------------------------------------------
 (async function boot() {
   hud.textContent = "불러오는 중…";
-  await loadGoblin();                 // ready for the real cave later
-  tutorialMode = true;                // start in the tutorial room
-  buildWorld(makeTutorialCave(), true);
-  updateTut();
-  if (started) startIntro();          // in case Start was clicked during loading
+  await loadGoblin();
+  if (TUTORIAL) {                     // tutorial stage
+    tutorialMode = true;
+    buildWorld(makeTutorialCave(), true);
+    updateTut();
+    if (started) startIntro();
+  } else {                           // straight into the cave
+    const res = await fetch("./cave.json", { cache: "no-store" });
+    buildWorld(loadCaveFromJSON(await res.json()), false);
+  }
 })();
 
 window.addEventListener("resize", () => {

@@ -225,6 +225,12 @@ function computeGI() {
 totalEmissiveRadiance += vGI * diffuseColor.rgb * 2.0;
 ```
 
+> 게임 내에서 **G 키**로 GI 시각화 모드를 켜면 표면에 **간접광 성분만** 표시되어 빛이 어디까지 퍼졌는지 한눈에 볼 수 있다.
+
+![GI 전파 시각화](res/gi_heatmap.svg)
+
+*그림 6-2. GI flood 전파의 탑다운 시각화. 파란 점(글로우스톤)에서 나온 빛이 **복도를 따라 모퉁이를 돌아** 퍼진다(밝을수록 간접광이 강함, 어두운 영역은 벽). 빛이 벽을 통과하지 못하고 열린 공간으로만 전파되는 것을 확인할 수 있다.*
+
 ### 선택 이유
 
 - WebGL2에는 compute 셰이더가 없어 GPU 프로브 ray-tracing(정통 DDGI)이 무겁고 구현 리스크가 크다.
