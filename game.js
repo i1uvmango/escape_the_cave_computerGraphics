@@ -196,7 +196,8 @@ let keysGot = 0, totalKeys = 0, won = false, lost = false, started = false;
 let torchesLeft = 10; const torches = []; let aimedKey = null;
 // health (Minecraft-style: 10 hearts = 20 HP), goblins
 const HP_MAX = 20; let hp = HP_MAX, regenAcc = 0, shakeT = 0;
-const goblins = []; const GOBLIN_SPEED = 1.5, GOBLIN_DETECT = 45, GOBLIN_DMG = 3;
+const goblins = []; const GOBLIN_SPEED = 2.5, GOBLIN_DETECT = 45, GOBLIN_DMG = 3, GOBLIN_HEAR = 30; // speed = 플레이어 달리기(7.5)의 1/3; GOBLIN_HEAR = 달릴 때 들리는 범위
+let playerRunning = false;          // true while sprinting (Shift+W) → goblins hear it
 let goblinsAngry = false;   // unleashed when all glowstones are spent (strategic resource)
 let goblinTemplate = null, goblinClips = []; const GOBLIN_FACE = 0; // model facing offset
 let playerTemplate = null, playerClips = []; // human player character (Standard Walk) — shadow caster
@@ -268,10 +269,12 @@ fprompt.textContent = "[F] 줍기";
 document.body.appendChild(fprompt);
 // tutorial intro cards: spotlight the relevant UI (dim everything else), F to advance
 const INTRO = [
+  ["환영합니다 — Escape the Cave", "무너진 동굴에서 <b>열쇠 조각 3개</b>를 모아 출구로 탈출하세요.<br><b>F</b>를 눌러 조작 안내를 시작합니다.", null],
   ["나침반", "좌측 하단 나침반은 <b>가장 가까운 열쇠</b> 방향을 가리킵니다.", () => compassEl],
   ["손전등", "<b>좌클릭</b>으로 손전등을 켜고 끕니다. 지속시간은 <b>3분</b>뿐이니 배터리를 아껴 쓰세요.", () => batteryEl],
   ["글로우스톤", "<b>우클릭</b>으로 글로우스톤을 설치합니다. 영구히 빛나지만 <b>회수할 수 없고</b>, <b>10개를 모두 소진하면 고블린이 깨어나 공격</b>하니 전략적으로 쓰세요.", () => hud],
   ["열쇠 조각", "화면 중앙 <b>조준점</b>으로 열쇠를 겨냥하고 <b>F</b>로 줍습니다. 3개를 모으면 출구가 열립니다.", () => crosshair],
+  ["고블린 (위험)", "어둠 속 고블린은 <b>손전등 빛</b>이나 <b>달리는 발소리</b>에 이끌려 다가옵니다. <b>Shift+W로 달리면 멀리서도 들키니</b>, 위험할 땐 걷는 게 안전합니다. 이동 속도는 당신 달리기의 1/3입니다.", () => heartsEl],
   ["지도", "<b>M</b> 키로 지나온 길(지도)을 확인할 수 있습니다.", () => document.getElementById("guide")],
   ["GI 확인 (probe)", "<b>P</b> 키로 GI probe 격자를 표시합니다 — 손전등·글로우스톤 빛이 동굴에 어떻게 퍼지는지(간접광)를 점으로 확인할 수 있습니다.", () => document.getElementById("guide")],
 ];
@@ -294,7 +297,7 @@ function showIntroCard() {
   const [t, d, tgt] = INTRO[introIdx];
   introBox.innerHTML = `<div style="font-size:13px;color:#8fa6c4;letter-spacing:2px">조작 안내 ${introIdx + 1} / ${INTRO.length}</div>` +
     `<div style="font-size:24px;color:#ffd24a;margin:8px 0 10px">${t}</div><div>${d}</div>` +
-    `<div style="margin-top:16px;opacity:.78;font-size:14px">강조된 부분을 확인하고 <b style="color:#ffd24a">F</b>로 넘어가세요</div>`;
+    `<div style="margin-top:16px;opacity:.78;font-size:14px"><b style="color:#ffd24a">F</b> 를 눌러 다음으로 →</div>`;
   introBox.style.display = "block";
   highlightTarget(tgt ? tgt() : null);
 }
@@ -397,7 +400,7 @@ function buildWorld(c, isTut = false) {
   pos.set(sp[0] + off.x + 0.5, sp[1] + off.y, sp[2] + off.z + 0.5);
   vel.set(0, 0, 0);
   yaw = Math.atan2(sp[0] - ex[0], sp[2] - ex[2]); pitch = 0;
-  hp = HP_MAX; updateHearts(); spawnGoblins(isTut ? 0 : 4);
+  hp = HP_MAX; updateHearts(); spawnGoblins(isTut ? 0 : 8);   // doubled goblin count
   battery = BATTERY_MAX; flashOn = true; flashlight.intensity = 11; updateBattery();   // reset flashlight
   visited = new Uint8Array(c.dims.X * c.dims.Z);   // fog-of-war for the map
   setupGI(); buildVertCellMap(); bakeGIToVertices();   // DDGI probe grid + static vertex→cell map
@@ -493,8 +496,9 @@ function updatePlayer(dt) {
   if (keys["KeyD"]) { mx += right.x; mz += right.z; }
   if (keys["KeyA"]) { mx -= right.x; mz -= right.z; }
   const len = Math.hypot(mx, mz);
+  const run = len > 0 && (keys["ShiftLeft"] || keys["ShiftRight"]) && keys["KeyW"];
+  playerRunning = run;                                     // goblins hear sprinting
   if (len > 0) {
-    const run = (keys["ShiftLeft"] || keys["ShiftRight"]) && keys["KeyW"];
     const dirx = mx / len, dirz = mz / len;
     let dist = (run ? RUN_SPEED : WALK_SPEED) * dt;        // slower speeds
     const maxStep = RAD * 0.5;                             // sub-step so fast moves / low fps can't tunnel thin walls
@@ -504,7 +508,7 @@ function updatePlayer(dt) {
       collideWalls();
       dist -= d;
     }
-    stepT -= dt; if (stepT <= 0) { sfxStep(); stepT = run ? 0.4 : 0.55; }   // footsteps
+    stepT -= dt; if (stepT <= 0) { sfxStep(run); stepT = run ? 0.4 : 0.55; }   // louder footsteps while running
     markTut("move");
   }
   if (keys["Space"] && onGround) { vel.y = 8.5; onGround = false; }          // jump
@@ -804,7 +808,9 @@ function inFlashlightView(p) {
 }
 function updateGoblins(dt) {
   for (const g of goblins) {
-    const aggro = goblinsAngry || inFlashlightView(g.pos);   // beam-drawn, or unleashed when glowstones run out
+    const heardRun = playerRunning && Math.hypot(pos.x - g.pos.x, pos.z - g.pos.z) < GOBLIN_HEAR;  // hears sprinting
+    const aggro = goblinsAngry || heardRun || inFlashlightView(g.pos);   // beam-drawn, noise-drawn, or unleashed
+
     let moving = false;
     if (aggro) {
       const dx = pos.x - g.pos.x, dz = pos.z - g.pos.z, dist = Math.hypot(dx, dz) || 1;
@@ -1023,7 +1029,7 @@ function sfxPickup() { tone(680, 0.12, "sine", 0.25); setTimeout(() => tone(1020
 function sfxTorch() { noiseBurst(0.28, 0.12); tone(210, 0.16, "triangle", 0.12); }
 function sfxWin() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.18, "sine", 0.25), i * 130)); }
 function sfxLose() { tone(180, 0.5, "sawtooth", 0.25); tone(90, 0.7, "square", 0.2); }
-function sfxStep() { noiseBurst(0.05, 0.05); }
+function sfxStep(loud) { noiseBurst(loud ? 0.07 : 0.05, loud ? 0.17 : 0.05); }   // running = amplified footstep
 function sfxHeart() { tone(62, 0.12, "sine", 0.28); setTimeout(() => tone(54, 0.14, "sine", 0.22), 150); }
 function sfxGrowl(vol) {                 // Minecraft-zombie-like groan
   if (!actx) return;
