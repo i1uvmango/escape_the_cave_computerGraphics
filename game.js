@@ -198,7 +198,7 @@ const goblins = []; const GOBLIN_SPEED = 1.5, GOBLIN_DETECT = 45, GOBLIN_DMG = 3
 let goblinsAngry = false;   // unleashed when all glowstones are spent (strategic resource)
 let goblinTemplate = null, goblinClips = []; const GOBLIN_FACE = 0; // model facing offset
 // baked indirect-GI volume (flood from glowstones) + audio timers
-let caveGeo = null, caveAGI = null, giIrr = null, giTmp = null, giOpen = null, giDimX = 0, giDimY = 0, giDimZ = 0;
+let caveGeo = null, caveAGI = null, giIrr = null, giVertCell = null, giOpen = null, giDimX = 0, giDimY = 0, giDimZ = 0;
 const GI_CELL = 3; let stepT = 0, heartT = 0, growlT = 6;
 let visited = null, mapOpen = false, mapCanvas = null;   // explored-route map (M)
 // tutorial stage: practice controls in a small room before the real cave
@@ -210,7 +210,7 @@ function clearWorld() {
   worldGroup.traverse((o) => { if (o.geometry) { o.geometry.disposeBoundsTree && o.geometry.disposeBoundsTree(); o.geometry.dispose(); } });
   scene.remove(worldGroup); worldGroup = new THREE.Group(); scene.add(worldGroup);
   keyItems.length = 0; torches.length = 0; goblins.length = 0;
-  exitMesh = null; exitLight = null; collider = null; caveGeo = null; probeMesh = null; probeCells.length = 0;
+  exitMesh = null; exitLight = null; collider = null; caveGeo = null; giVertCell = null; probeMesh = null; probeCells.length = 0;
   keysGot = 0; won = false; lost = false; torchesLeft = 10; goblinsAngry = false;
 }
 function makeTutorialCave() {   // tiny solid room with a floor, one key, an exit
@@ -395,7 +395,7 @@ function buildWorld(c, isTut = false) {
   hp = HP_MAX; updateHearts(); spawnGoblins(isTut ? 0 : 4);
   battery = BATTERY_MAX; flashOn = true; flashlight.intensity = 11; updateBattery();   // reset flashlight
   visited = new Uint8Array(c.dims.X * c.dims.Z);   // fog-of-war for the map
-  setupGI(); bakeGIToVertices();   // DDGI probe grid built; ambient until rays accumulate
+  setupGI(); buildVertCellMap(); bakeGIToVertices();   // DDGI probe grid + static vertex→cell map
   updateHUD();
 }
 
@@ -799,7 +799,7 @@ function giCell(wx, wy, wz) {
   return cx + cy * giDimX + cz * giDimX * giDimY;
 }
 // ===== DDGI: probe grid + BVH ray-traced irradiance + temporal accumulation =====
-const DDGI_RAYS = 24, DDGI_REFRESH = 8;            // full-grid refresh every 8 frames
+const DDGI_RAYS = 12, DDGI_REFRESH = 16;           // fewer rays + slower refresh (temporal accumulation smooths it)
 const DDGI_TGT = 55, FLASH_RANGE = 110, FLASH_COS = 0.70;
 let ddgiDirs = null, giProbes = null, giCursor = 0;
 const _rc = new THREE.Raycaster(); _rc.firstHitOnly = true;
@@ -862,15 +862,20 @@ function ddgiTick() {                                // amortized: refresh a sli
   for (let s = 0; s < slice; s++) { gatherProbe(giCursor); giCursor = (giCursor + 1) % total; }
   bakeGIToVertices();
 }
-function bakeGIToVertices() {
-  if (!caveGeo || !caveAGI || !giIrr) return;
+function buildVertCellMap() {   // vertex→probe-cell is static (geometry fixed) → compute once
+  if (!caveGeo || !giOpen) return;
   const p = caveGeo.getAttribute("position"), nm = caveGeo.getAttribute("normal"), s = GI_CELL * 0.8;
+  giVertCell = new Int32Array(p.count);
   for (let i = 0; i < p.count; i++) {
     // sample the probe just inside the cave (offset along the surface normal) so wall verts read a lit probe
     let ci = giCell(p.getX(i) + nm.getX(i) * s, p.getY(i) + nm.getY(i) * s, p.getZ(i) + nm.getZ(i) * s);
     if (!giOpen[ci]) ci = giCell(p.getX(i), p.getY(i), p.getZ(i));
-    caveAGI[i * 3] = giIrr[ci * 3]; caveAGI[i * 3 + 1] = giIrr[ci * 3 + 1]; caveAGI[i * 3 + 2] = giIrr[ci * 3 + 2];
+    giVertCell[i] = ci;
   }
+}
+function bakeGIToVertices() {   // per-frame: cheap gather using the precomputed map (no coord math)
+  if (!caveGeo || !caveAGI || !giIrr || !giVertCell) return;
+  for (let i = 0; i < giVertCell.length; i++) { const ci = giVertCell[i] * 3; caveAGI[i * 3] = giIrr[ci]; caveAGI[i * 3 + 1] = giIrr[ci + 1]; caveAGI[i * 3 + 2] = giIrr[ci + 2]; }
   caveGeo.getAttribute("aGI").needsUpdate = true;
   if (probeMesh && probeMesh.visible) updateProbeColors();   // keep probe colors live
 }
