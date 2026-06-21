@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Escape the Cave</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #05060a; cursor: default; }
+    canvas { display: block; }
+    #hud {
+      position: fixed; top: 14px; left: 16px; z-index: 10; pointer-events: none;
+      font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace; color: #e6ecf5;
+      text-shadow: 0 1px 3px #000;
+    }
+    #hud b { color: #ffd24a; }
+    #crosshair {
+      position: fixed; top: 50%; left: 50%; width: 6px; height: 6px; z-index: 10;
+      margin: -3px 0 0 -3px; border-radius: 50%; background: rgba(255,255,255,0.7); pointer-events: none;
+    }
+    #guide {
+      position: fixed; top: 12px; right: 14px; z-index: 12; pointer-events: none; text-align: right;
+      font: 11px/1.7 ui-monospace, Menlo, Consolas, monospace; color: #b9c6da;
+      background: rgba(10,14,22,0.55); padding: 8px 11px; border-radius: 7px;
+      border: 1px solid rgba(120,140,180,0.25); text-shadow: 0 1px 2px #000;
+    }
+    #guide b { color: #ffd24a; }
+    #banner {
+      position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 10;
+      font: 14px/1.5 ui-monospace, monospace; color: #cdd6e4; pointer-events: none;
+      background: rgba(8,12,20,0.7); padding: 8px 16px; border-radius: 8px;
+      border: 1px solid rgba(120,140,180,0.3); text-align: center;
+    }
+    #overlay {
+      position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 14px; background: rgba(4,6,10,0.86); color: #eef3fb;
+      font: 16px/1.6 ui-monospace, monospace; text-align: center;
+    }
+    #overlay h1 { font-size: 44px; margin: 0; letter-spacing: 3px; color: #ffe9a8; text-shadow: 0 3px 14px rgba(0,0,0,.7); }
+    #overlay .key { color: #ffd24a; }
+    #overlay .intro { max-width: 720px; font-size: 15px; color: #c7d2e2; line-height: 1.7; }
+    #overlay button {
+      margin-top: 10px; padding: 14px 40px; font: 700 18px/1 ui-monospace, monospace; color: #06223a; background: #ffd24a;
+      border: none; border-radius: 10px; cursor: pointer; box-shadow: 0 4px 0 #b88c12, 0 8px 22px rgba(0,0,0,.5);
+    }
+    #overlay button:active { transform: translateY(2px); box-shadow: 0 2px 0 #b88c12; }
+    /* controls panel */
+    .ctrls { display: flex; gap: 46px; align-items: flex-start; background: rgba(16,22,34,.6);
+      border: 1px solid rgba(120,140,180,.28); border-radius: 14px; padding: 24px 34px; }
+    .ctrls h3 { margin: 0 0 14px; font-size: 13px; letter-spacing: 2px; color: #8fa6c4; text-align: left; font-weight: 700; }
+    .crow { display: flex; align-items: center; gap: 12px; margin: 10px 0; font-size: 17px; color: #e8eef8; }
+    .keys { display: inline-flex; gap: 5px; align-items: center; min-width: 132px; }
+    .kbd {
+      display: inline-flex; align-items: center; justify-content: center; min-width: 34px; height: 34px; padding: 0 10px;
+      font: 700 15px/1 ui-monospace, monospace; color: #1b2230;
+      background: linear-gradient(#ffffff, #d4dbe7); border: 1px solid #97a3b6;
+      border-bottom-width: 4px; border-radius: 7px; box-shadow: 0 2px 0 rgba(0,0,0,.35);
+    }
+    .plus { color: #8fa6c4; font-weight: 700; }
+    .mlabel { display: flex; align-items: center; gap: 10px; margin: 12px 0; font-size: 16px; }
+    .mlabel b { font-size: 17px; }
+    #err { position: fixed; top: 0; left: 0; right: 0; z-index: 99; display: none;
+      font: 12px/1.5 ui-monospace, monospace; color: #ffb4b4; background: rgba(60,10,10,0.92);
+      padding: 8px 10px; white-space: pre-wrap; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "three-mesh-bvh": "https://unpkg.com/three-mesh-bvh@0.7.8/build/index.module.js"
+    }
+  }
+  </script>
+  <script>
+    window.addEventListener("error", (e) => { const el=document.getElementById("err"); el.style.display="block"; el.textContent="ERROR: "+(e.message||e.error)+"\n"+(e.filename||""); });
+    window.addEventListener("unhandledrejection", (e) => { const el=document.getElementById("err"); el.style.display="block"; el.textContent="PROMISE: "+(e.reason&&(e.reason.stack||e.reason.message||e.reason)); });
+  </script>
+</head>
+<body>
+  <div id="err"></div>
+  <div id="crosshair"></div>
+  <div id="guide">
+    <b>WASD</b> move&nbsp;·&nbsp;<b>Shift+W</b> run&nbsp;·&nbsp;<b>Space</b> jump<br>
+    <b>L-click</b> flashlight&nbsp;·&nbsp;<b>R-click</b> glowstone<br>
+    <b>F</b> grab key&nbsp;·&nbsp;<b>M</b> map&nbsp;·&nbsp;<b>B</b> music&nbsp;·&nbsp;<b>Esc</b> release
+  </div>
+  <div id="hud">loading…</div>
+  <div id="banner"><b>Drag</b> mouse to look · <b>WASD</b> move · <b>Shift</b> run</div>
+  <div id="overlay">
+    <h1>ESCAPE THE CAVE</h1>
+    <div class="intro">You're trapped in a collapsed cave. Find the <span class="key">3 key fragments</span>, then reach the <span style="color:#4fe06a">exit</span>. Goblins lurk in the dark and are drawn to your flashlight — light the way, but don't get cornered.</div>
+    <div class="intro" style="color:#ffcf6a;border:1px solid rgba(255,180,80,.4);border-radius:8px;padding:8px 16px;background:rgba(60,40,10,.35)">
+      <b>TIP —</b> Your flashlight has only <b>3 minutes</b> of battery (it drains only while ON, <b>left-click</b> to toggle). Use it sparingly and light your path with <b>glowstones</b> instead.
+    </div>
+    <div class="ctrls">
+      <div>
+        <h3>KEYBOARD</h3>
+        <div class="crow"><span class="keys"><span class="kbd">W</span><span class="kbd">A</span><span class="kbd">S</span><span class="kbd">D</span></span> Move</div>
+        <div class="crow"><span class="keys"><span class="kbd">Shift</span><span class="plus">+</span><span class="kbd">W</span></span> Run</div>
+        <div class="crow"><span class="keys"><span class="kbd">Space</span></span> Jump</div>
+        <div class="crow"><span class="keys"><span class="kbd">F</span></span> Pick up key <span style="opacity:.6">(aim at it)</span></div>
+        <div class="crow"><span class="keys"><span class="kbd">M</span></span> Open map</div>
+        <div class="crow"><span class="keys"><span class="kbd">B</span></span> Music on / off</div>
+        <div class="crow"><span class="keys"><span class="kbd">Esc</span></span> Release mouse</div>
+      </div>
+      <div>
+        <h3>MOUSE</h3>
+        <svg width="118" height="172" viewBox="0 0 118 172" style="display:block;margin:0 auto 6px">
+          <defs><clipPath id="mc"><rect x="14" y="6" width="90" height="160" rx="44"/></clipPath></defs>
+          <rect x="14" y="6" width="90" height="160" rx="44" fill="#1c2333" stroke="#8b97ab" stroke-width="2.5"/>
+          <g clip-path="url(#mc)">
+            <rect x="14" y="6" width="45" height="58" fill="#ffd24a" opacity="0.85"/>
+            <rect x="59" y="6" width="45" height="58" fill="#5fd0ff" opacity="0.85"/>
+          </g>
+          <line x1="59" y1="6" x2="59" y2="64" stroke="#1c2333" stroke-width="2.5"/>
+          <line x1="14" y1="64" x2="104" y2="64" stroke="#8b97ab" stroke-width="2"/>
+          <rect x="54" y="20" width="10" height="24" rx="5" fill="#1c2333" stroke="#8b97ab" stroke-width="1.5"/>
+        </svg>
+        <div class="mlabel"><span style="color:#ffd24a;font-size:20px">●</span> <b style="color:#ffd24a">Left</b> — Flashlight on/off</div>
+        <div class="mlabel"><span style="color:#5fd0ff;font-size:20px">●</span> <b style="color:#5fd0ff">Right</b> — Place glowstone</div>
+        <div class="mlabel"><span style="color:#aab;font-size:20px">↔</span> <b>Move</b> — Look around</div>
+      </div>
+    </div>
+    <div style="opacity:.7;font-size:13px">Compass (bottom-left) points to the nearest key — it turns green toward the exit once you can leave.</div>
+    <button id="startBtn">Click to Start</button>
+  </div>
+  <script type="module" src="./game.js?v=tut1"></script>
+</body>
+</html>
