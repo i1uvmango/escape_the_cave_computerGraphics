@@ -199,8 +199,8 @@ const HP_MAX = 20; let hp = HP_MAX, regenAcc = 0, shakeT = 0;
 const goblins = []; const GOBLIN_SPEED = 1.5, GOBLIN_DETECT = 45, GOBLIN_DMG = 3;
 let goblinsAngry = false;   // unleashed when all glowstones are spent (strategic resource)
 let goblinTemplate = null, goblinClips = []; const GOBLIN_FACE = 0; // model facing offset
-let playerTemplate = null, playerClips = [], playerMats = []; // human player character (Standard Walk)
-let thirdPerson = false; const BODY_FACE = Math.PI;  // V toggles 1st/3rd person; model facing offset
+let playerTemplate = null, playerClips = []; // human player character (Standard Walk) — shadow caster
+const BODY_FACE = Math.PI;  // player model facing offset (body is shadow-only, 1st person)
 // baked indirect-GI volume (flood from glowstones) + audio timers
 let caveGeo = null, caveAGI = null, giIrr = null, giVertCell = null, giOpen = null, giDimX = 0, giDimY = 0, giDimZ = 0;
 const GI_CELL = 3; let stepT = 0, heartT = 0, growlT = 6;
@@ -408,9 +408,8 @@ function buildWorld(c, isTut = false) {
 const pos = new THREE.Vector3(), vel = new THREE.Vector3();
 // invisible player body: FrontSide capsule — camera sits inside it (backfaces culled → unseen in 1st person) but it casts a shadow
 let playerBody = null, playerMixer = null, playerAction = null;   // human character: shadow caster (1st) / visible body (3rd)
-function buildPlayerBody() {
+function buildPlayerBody() {                         // human body used only as a shadow caster (invisible in 1st person)
   if (playerBody) { playerBody.removeFromParent(); playerBody = null; playerMixer = null; playerAction = null; }
-  playerMats = [];
   const tmpl = playerTemplate || goblinTemplate;    // prefer the human (Standard Walk); goblin as fallback
   if (tmpl) {
     const model = cloneSkinned(tmpl);
@@ -419,7 +418,7 @@ function buildPlayerBody() {
       if (!o.isMesh) return;
       o.frustumCulled = false; o.castShadow = true; o.receiveShadow = false;
       o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();  // isolate
-      for (const m of (Array.isArray(o.material) ? o.material : [o.material])) playerMats.push(m);
+      for (const m of (Array.isArray(o.material) ? o.material : [o.material])) { m.colorWrite = false; m.depthWrite = false; } // shadow-only
     });
     playerBody = new THREE.Group(); playerBody.add(model);
     playerMixer = new THREE.AnimationMixer(model);
@@ -427,11 +426,10 @@ function buildPlayerBody() {
     if (clips.length) { playerAction = playerMixer.clipAction(clips[0]); playerAction.play(); playerAction.paused = true; }
   } else {                                          // capsule fallback if both FBX failed
     const cap = new THREE.Mesh(new THREE.CapsuleGeometry(0.45, 2.0, 4, 8), new THREE.MeshStandardMaterial({ color: 0x202327 }));
+    cap.material.colorWrite = false; cap.material.depthWrite = false;
     cap.castShadow = true; cap.position.y = 1.45;
-    playerMats.push(cap.material);
     playerBody = new THREE.Group(); playerBody.add(cap);
   }
-  applyBodyView();                                  // 1st-person → shadow-only
   playerBody.visible = false; scene.add(playerBody);
 }
 // only the NEAREST glowstone casts a shadow (1 shadow light, cost)
@@ -454,21 +452,12 @@ const RAD = 0.4, STEP = 1.05, GRAV = 30, LOOK = 0.0022; // collision = smooth me
 const ray = new THREE.Raycaster(); ray.firstHitOnly = true;
 const DOWN = new THREE.Vector3(0, -1, 0);
 const _seg = new THREE.Line3(), _box = new THREE.Box3(), _tp = new THREE.Vector3(), _cp = new THREE.Vector3(), _push = new THREE.Vector3(), _ro = new THREE.Vector3();
-const _eu = new THREE.Euler(), _camDir = new THREE.Vector3(), _focus = new THREE.Vector3(), _tmpDir = new THREE.Vector3();
-function placeCamera() {                              // 1st-person eye, or 3rd-person behind the player
+const _eu = new THREE.Euler();
+function placeCamera() {                              // first-person eye
   camera.quaternion.setFromEuler(_eu.set(pitch, yaw, 0, "YXZ"));
-  if (thirdPerson) {
-    camera.getWorldDirection(_camDir);
-    _focus.set(pos.x, pos.y + 1.8, pos.z);
-    let D = 6;
-    if (collider) { ray.set(_focus, _tmpDir.copy(_camDir).negate()); ray.far = D; const h = ray.intersectObject(collider, false)[0]; if (h) D = Math.max(1.3, h.distance - 0.3); }
-    camera.position.copy(_focus).addScaledVector(_camDir, -D);
-  } else {
-    camera.position.set(pos.x, pos.y + (PH - 0.5), pos.z);
-  }
+  camera.position.set(pos.x, pos.y + (PH - 0.5), pos.z);
   headLamp.position.copy(camera.position);
 }
-function applyBodyView() { for (const m of playerMats) { m.colorWrite = thirdPerson; m.depthWrite = thirdPerson; } } // 1st = shadow-only, 3rd = visible
 
 function collideWalls() {
   if (!collider) return;
@@ -574,7 +563,6 @@ window.addEventListener("keydown", (e) => {
   if (!wasDown && e.code === "KeyF") tryInteract();   // fire once, not on repeat
   if (!wasDown && e.code === "KeyM") { mapOpen = !mapOpen; if (mapCanvas) mapCanvas.style.display = mapOpen ? "block" : "none"; markTut("map"); }
   if (!wasDown && e.code === "KeyP") { if (!probeMesh) buildProbeViz(); if (probeMesh) { probeMesh.visible = !probeMesh.visible; if (probeMesh.visible) updateProbeColors(); showToast(probeMesh.visible ? `GI probe 격자 표시 — ${probeCells.length}개 (동굴 공간 셀, ${GI_CELL}복셀 간격)` : "probe 표시 OFF"); } }
-  if (!wasDown && e.code === "KeyV") { thirdPerson = !thirdPerson; applyBodyView(); showToast(thirdPerson ? "3인칭 시점" : "1인칭 시점", 1200); }
   if (!wasDown && e.code === "KeyB") toggleMusic();
   if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
 });
@@ -878,8 +866,9 @@ function giCell(wx, wy, wz) {
 }
 // ===== DDGI: probe grid + BVH ray-traced irradiance + temporal accumulation =====
 const DDGI_RAYS = 16, DDGI_REFRESH = 8, DDGI_BURST = 40;  // STATIC GI (glowstones only): traced in bursts after a placement
-const DDGI_TGT = 55;
+const DDGI_TGT = 55, FLASH_GI = 0.85, FLASH_GI_RANGE = 100; // dynamic flashlight indirect (NOT DDGI — a cheap real-time injection trick)
 let ddgiDirs = null, giProbes = null, giCursor = 0, giDirty = 0;  // giDirty = frames left to converge the static grid
+let giFlash = null, flashWasOn = false;            // per-frame flashlight indirect, added on top of the static glowstone GI
 const _rc = new THREE.Raycaster(); _rc.firstHitOnly = true;
 const _pO = new THREE.Vector3(), _rd = new THREE.Vector3(), _hn = new THREE.Vector3();
 function buildDDGI() {
@@ -892,7 +881,24 @@ function buildDDGI() {
     giProbes.push(ci, cx * GI_CELL + half + off.x + 0.5, cy * GI_CELL + half + off.y + 0.5, cz * GI_CELL + half + off.z + 0.5);
   }
   giCursor = 0;
+  giFlash = new Float32Array(giIrr.length);
   for (let i = 0; i < giIrr.length; i += 3) { giIrr[i] = 0.016; giIrr[i + 1] = 0.02; giIrr[i + 2] = 0.028; } // ambient floor
+}
+// Flashlight indirect light — NOT DDGI. A real-time trick: 1 raycast to the beam hit, inject light into the nearby probe cells.
+function flashGI() {
+  if (!giFlash) return;
+  giFlash.fill(0);
+  if (!flashOn || battery <= 0 || !collider) return;
+  camera.getWorldDirection(_dir);
+  aimRay.set(camera.position, _dir); aimRay.far = FLASH_GI_RANGE;
+  const h = aimRay.intersectObject(collider, false)[0]; if (!h) return;
+  const W = giDimX, H = giDimY, ci = giCell(h.point.x, h.point.y, h.point.z);
+  const cz = (ci / (W * H)) | 0, rem = ci % (W * H), cy = (rem / W) | 0, cx = rem % W;
+  const inject = (c, s) => { if (c < 0 || c >= giOpen.length || !giOpen[c]) return; giFlash[c * 3] += 1.0 * s; giFlash[c * 3 + 1] += 0.95 * s; giFlash[c * 3 + 2] += 0.82 * s; };
+  inject(ci, FLASH_GI);                              // hit cell + open 6-neighbors (soft pool)
+  if (cx > 0) inject(ci - 1, FLASH_GI * 0.5); if (cx < W - 1) inject(ci + 1, FLASH_GI * 0.5);
+  if (cy > 0) inject(ci - W, FLASH_GI * 0.5); if (cy < H - 1) inject(ci + W, FLASH_GI * 0.5);
+  if (cz > 0) inject(ci - W * H, FLASH_GI * 0.5); if (cz < giDimZ - 1) inject(ci + W * H, FLASH_GI * 0.5);
 }
 function occluded(px, py, pz, tx, ty, tz, dist) {   // shadow ray via BVH
   _rd.set(tx - px, ty - py, tz - pz).normalize();
@@ -922,12 +928,11 @@ function gatherProbe(idx) {                          // STATIC GI: trace rays, g
   const a = 0.5;                                      // temporal blend (static → converges over the burst frames)
   giIrr[ci * 3] += (ar - giIrr[ci * 3]) * a; giIrr[ci * 3 + 1] += (ag - giIrr[ci * 3 + 1]) * a; giIrr[ci * 3 + 2] += (ab - giIrr[ci * 3 + 2]) * a;
 }
-function ddgiTick() {                                // amortized: refresh a slice of probes each frame, then bake
+function ddgiTick() {                                // amortized: refresh a slice of static probes (bake happens per-frame)
   if (!giProbes || !collider || !giIrr) return;
   const total = giProbes.length / 4; if (!total) return;
   const slice = Math.ceil(total / DDGI_REFRESH);
   for (let s = 0; s < slice; s++) { gatherProbe(giCursor); giCursor = (giCursor + 1) % total; }
-  bakeGIToVertices();
 }
 function buildVertCellMap() {   // vertex→probe-cell is static (geometry fixed) → compute once
   if (!caveGeo || !giOpen) return;
@@ -940,9 +945,13 @@ function buildVertCellMap() {   // vertex→probe-cell is static (geometry fixed
     giVertCell[i] = ci;
   }
 }
-function bakeGIToVertices() {   // per-frame: cheap gather using the precomputed map (no coord math)
+function bakeGIToVertices() {   // per-frame: static glowstone GI + dynamic flashlight injection
   if (!caveGeo || !caveAGI || !giIrr || !giVertCell) return;
-  for (let i = 0; i < giVertCell.length; i++) { const ci = giVertCell[i] * 3; caveAGI[i * 3] = giIrr[ci]; caveAGI[i * 3 + 1] = giIrr[ci + 1]; caveAGI[i * 3 + 2] = giIrr[ci + 2]; }
+  const f = giFlash;
+  for (let i = 0; i < giVertCell.length; i++) {
+    const ci = giVertCell[i] * 3;
+    caveAGI[i * 3] = giIrr[ci] + (f ? f[ci] : 0); caveAGI[i * 3 + 1] = giIrr[ci + 1] + (f ? f[ci + 1] : 0); caveAGI[i * 3 + 2] = giIrr[ci + 2] + (f ? f[ci + 2] : 0);
+  }
   caveGeo.getAttribute("aGI").needsUpdate = true;
   if (probeMesh && probeMesh.visible) updateProbeColors();   // keep probe colors live
 }
@@ -971,7 +980,8 @@ function updateProbeColors() {
   if (!probeMesh || !giIrr) return;
   const c = new THREE.Color(), count = probeCells.length / 4;
   for (let i = 0; i < count; i++) {
-    const ci = probeCells[i * 4], r = giIrr[ci * 3], g = giIrr[ci * 3 + 1], b = giIrr[ci * 3 + 2];
+    const ci = probeCells[i * 4], f = giFlash;
+    const r = giIrr[ci * 3] + (f ? f[ci * 3] : 0), g = giIrr[ci * 3 + 1] + (f ? f[ci * 3 + 1] : 0), b = giIrr[ci * 3 + 2] + (f ? f[ci * 3 + 2] : 0);
     // unlit probes = faint blue dots so the lattice is visible; lit probes glow warm
     c.setRGB(Math.min(1, 0.06 + r * 1.7), Math.min(1, 0.10 + g * 1.7), Math.min(1, 0.22 + b * 1.6));
     probeMesh.setColorAt(i, c);
@@ -1063,7 +1073,13 @@ function animate() {
       if (flashOn) { battery -= dt; if (battery <= 0) { battery = 0; flashOn = false; flashlight.intensity = 0; } }
       updateBattery();
       updatePlayer(dt);
-      if (collider && giDirty > 0) { ddgiTick(); giDirty--; }   // static DDGI: only re-trace while converging after a placement
+      if (collider) {                                 // GI: static glowstone DDGI (burst) + dynamic flashlight injection
+        let changed = giDirty > 0;
+        if (changed) { ddgiTick(); giDirty--; }
+        if (flashOn && battery > 0) { flashGI(); changed = true; flashWasOn = true; }
+        else if (flashWasOn) { giFlash.fill(0); flashWasOn = false; changed = true; }   // clear once when turned off
+        if (changed) bakeGIToVertices();
+      }
       updateShadowLight();                          // nearest glowstone = the single shadow caster
       updateGoblins(dt);
       if (hp < HP_MAX) { regenAcc += dt; if (regenAcc >= 30) { regenAcc -= 30; hp = Math.min(HP_MAX, hp + 2); updateHearts(); } } // +1 heart / 30s
