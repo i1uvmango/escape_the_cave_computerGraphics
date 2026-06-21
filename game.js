@@ -95,7 +95,6 @@ const ROCK = {
   normal: loadTex(TEXP + "NormalGL.jpg", false),
   rough: loadTex(TEXP + "Roughness.jpg", false),
 };
-const giViewUniform = { value: 0 };   // GI visualization toggle (G key)
 function makeRockMaterial() {
   const mat = new THREE.MeshStandardMaterial({
     map: ROCK.color, roughnessMap: ROCK.rough, normalMap: ROCK.normal,
@@ -103,14 +102,13 @@ function makeRockMaterial() {
   });
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uTri = { value: 0.18 };
-    sh.uniforms.uGIView = giViewUniform;
     sh.vertexShader = sh.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vWP; varying vec3 vWN; varying vec3 vGI; attribute vec3 aGI;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\n vWP = (modelMatrix * vec4(transformed,1.0)).xyz; vGI = aGI;")
       .replace("#include <beginnormal_vertex>", "#include <beginnormal_vertex>\n vWN = normalize(mat3(modelMatrix) * objectNormal);");
     sh.fragmentShader = sh.fragmentShader
       .replace("#include <roughnessmap_pars_fragment>",
-        "#include <roughnessmap_pars_fragment>\nuniform float uTri; uniform float uGIView; varying vec3 vWP; varying vec3 vWN; varying vec3 vGI;\n" +
+        "#include <roughnessmap_pars_fragment>\nuniform float uTri; varying vec3 vWP; varying vec3 vWN; varying vec3 vGI;\n" +
         "vec4 triS(sampler2D s){ vec3 b=pow(abs(vWN),vec3(2.0)); b/=max(dot(b,vec3(1.0)),1e-4);\n" +
         " return texture2D(s,vWP.zy*uTri)*b.x+texture2D(s,vWP.xz*uTri)*b.y+texture2D(s,vWP.xy*uTri)*b.z; }\n" +
         "vec3 triN(){ vec3 b=pow(abs(vWN),vec3(2.0)); b/=max(dot(b,vec3(1.0)),1e-4);\n" +
@@ -121,9 +119,7 @@ function makeRockMaterial() {
       .replace("#include <roughnessmap_fragment>", "float roughnessFactor = roughness * triS(roughnessMap).g;")
       .replace("#include <normal_fragment_maps>", "normal = triN();")
       // baked indirect GI (glowstone bounce), added as light tinted by albedo
-      .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n totalEmissiveRadiance += vGI * diffuseColor.rgb * 2.0;")
-      // GI visualization: when on, show ONLY the baked indirect light (G key)
-      .replace("#include <opaque_fragment>", "#include <opaque_fragment>\n if (uGIView > 0.5) gl_FragColor = vec4(vGI * 8.0, 1.0);");
+      .replace("#include <emissivemap_fragment>", "#include <emissivemap_fragment>\n totalEmissiveRadiance += vGI * diffuseColor.rgb * 2.0;");
   };
   return mat;
 }
@@ -213,7 +209,7 @@ function clearWorld() {
   worldGroup.traverse((o) => { if (o.geometry) { o.geometry.disposeBoundsTree && o.geometry.disposeBoundsTree(); o.geometry.dispose(); } });
   scene.remove(worldGroup); worldGroup = new THREE.Group(); scene.add(worldGroup);
   keyItems.length = 0; torches.length = 0; goblins.length = 0;
-  exitMesh = null; exitLight = null; collider = null; caveGeo = null;
+  exitMesh = null; exitLight = null; collider = null; caveGeo = null; probeMesh = null; probeCells.length = 0;
   keysGot = 0; won = false; lost = false; torchesLeft = 10;
 }
 function makeTutorialCave() {   // tiny solid room with a floor, one key, an exit
@@ -509,7 +505,7 @@ window.addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (!wasDown && e.code === "KeyF") tryInteract();   // fire once, not on repeat
   if (!wasDown && e.code === "KeyM") { mapOpen = !mapOpen; if (mapCanvas) mapCanvas.style.display = mapOpen ? "block" : "none"; markTut("map"); }
-  if (!wasDown && e.code === "KeyG") { giViewUniform.value = giViewUniform.value > 0.5 ? 0 : 1; showToast(giViewUniform.value ? "GI 시각화 ON — 간접광만 표시 (글로우스톤을 놓아보세요)" : "GI 시각화 OFF"); }
+  if (!wasDown && e.code === "KeyP") { if (!probeMesh) buildProbeViz(); if (probeMesh) { probeMesh.visible = !probeMesh.visible; if (probeMesh.visible) updateProbeColors(); showToast(probeMesh.visible ? `GI probe 격자 표시 — ${probeCells.length}개 (동굴 공간 셀, ${GI_CELL}복셀 간격)` : "probe 표시 OFF"); } }
   if (!wasDown && e.code === "KeyB") toggleMusic();
   if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
 });
@@ -824,6 +820,39 @@ function bakeGIToVertices() {
   const p = caveGeo.getAttribute("position");
   for (let i = 0; i < p.count; i++) { const ci = giCell(p.getX(i), p.getY(i), p.getZ(i)); caveAGI[i * 3] = giIrr[ci * 3]; caveAGI[i * 3 + 1] = giIrr[ci * 3 + 1]; caveAGI[i * 3 + 2] = giIrr[ci * 3 + 2]; }
   caveGeo.getAttribute("aGI").needsUpdate = true;
+  if (probeMesh && probeMesh.visible) updateProbeColors();   // keep probe colors live
+}
+// --- DDGI-style probe grid visualization (P key) ----------------------------
+let probeMesh = null; const probeCells = [];
+function buildProbeViz() {
+  if (!giIrr || !cave) return;
+  if (probeMesh) { probeMesh.removeFromParent(); probeMesh.geometry.dispose(); probeMesh.material.dispose(); probeMesh = null; }
+  probeCells.length = 0;
+  const W = giDimX, H = giDimY, D = giDimZ, half = GI_CELL / 2;
+  for (let cz = 0; cz < D; cz++) for (let cy = 0; cy < H; cy++) for (let cx = 0; cx < W; cx++) {
+    const ci = cx + cy * W + cz * W * H; if (!giOpen[ci]) continue;          // only active (in-cave) probes
+    probeCells.push(ci);
+    probeCells.push(cx * GI_CELL + half + off.x + 0.5, cy * GI_CELL + half + off.y + 0.5, cz * GI_CELL + half + off.z + 0.5);
+  }
+  const count = probeCells.length / 4;
+  const geo = new THREE.SphereGeometry(0.28, 8, 6);
+  probeMesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ toneMapped: false }), count);
+  const m = new THREE.Matrix4();
+  for (let i = 0; i < count; i++) { m.makeTranslation(probeCells[i * 4 + 1], probeCells[i * 4 + 2], probeCells[i * 4 + 3]); probeMesh.setMatrixAt(i, m); }
+  probeMesh.instanceMatrix.needsUpdate = true; probeMesh.visible = false; probeMesh.renderOrder = 999;
+  worldGroup.add(probeMesh);
+  updateProbeColors();
+}
+function updateProbeColors() {
+  if (!probeMesh || !giIrr) return;
+  const c = new THREE.Color(), count = probeCells.length / 4;
+  for (let i = 0; i < count; i++) {
+    const ci = probeCells[i * 4], r = giIrr[ci * 3], g = giIrr[ci * 3 + 1], b = giIrr[ci * 3 + 2];
+    // unlit probes = faint blue dots so the lattice is visible; lit probes glow warm
+    c.setRGB(Math.min(1, 0.06 + r * 1.7), Math.min(1, 0.10 + g * 1.7), Math.min(1, 0.22 + b * 1.6));
+    probeMesh.setColorAt(i, c);
+  }
+  if (probeMesh.instanceColor) probeMesh.instanceColor.needsUpdate = true;
 }
 
 // --- sound effects (WebAudio-generated; no asset files) ---------------------
