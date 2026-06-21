@@ -341,7 +341,7 @@ totalEmissiveRadiance += vGI * diffuseColor.rgb * 2.0;
 강의의 실시간 GI 3분류에 본 프로젝트를 대응시키면:
 
 - **Probe 기반(DDGI)** — **현재 채택안**. 위 표 참조.
-- **Voxel 기반(LPV/Voxel GI)** — 초기 버전이 복셀 광전파(LPV)였고, git 태그 `lpv-version`으로 보존되어 있다.
+- **Voxel 기반(LPV/Voxel GI)** — 미사용
 - **Surfel 기반(Surfel GI)** — 미사용.
 
 ---
@@ -553,33 +553,7 @@ Attack (1초마다 3 피해, 화면 흔들림 + 피격음)
 
 ---
 
-## 11. 검증
-
-### 테스트 항목
-
-- **결정론** — 같은 seed → 항상 동일한 동굴(`cave.json` == 재생성 결과, 바이트 일치).
-- **보행 가능성 보장** — 생성기가 walkable 컴포넌트를 보장(미달 시 더 깎아 재시도).
-- **풀이 가능성(solvable)** — 입구·출구·모든 열쇠가 하나의 보행 컴포넌트에 속함(BFS 검증).
-
-### 결과
-
-커밋된 맵(seed 1): 128×64×128, walkable 3722칸, SDF 베이크 포함, 입구→출구→열쇠 전부 도달 가능(Solvable: YES). 다수 seed에서 동일 검증 통과.
-
-### 재현 방법
-
-```bash
-# 빌드 도구 없음 — 정적 서버로 열기만 하면 됨
-python3 -m http.server 8000
-# 브라우저에서 http://localhost:8000/game.html  (게임)
-#               http://localhost:8000/generator.html (생성기/검증 뷰어)
-
-# 맵 재생성(선택)
-node gen.mjs
-```
-
----
-
-## 12. 한계와 향후 계획
+## 11. 한계와 향후 계획
 
 ### 현재 한계
 
