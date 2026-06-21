@@ -74,7 +74,7 @@ new GLTFLoader().load("./flashlight_tactical_mesh.glb", (gltf) => {
 
 // 2D HUD compass (compass.png dial + red needle pointing to the nearest key)
 const compassEl = document.createElement("div");
-compassEl.style.cssText = "position:fixed;left:18px;bottom:46px;width:104px;height:104px;z-index:12;pointer-events:none;";
+compassEl.style.cssText = "position:fixed;left:18px;bottom:46px;width:104px;height:104px;z-index:12;pointer-events:none;clip-path:circle(50%);";
 const compassImg = document.createElement("img");
 compassImg.src = "./compass.png"; compassImg.style.cssText = "width:100%;height:100%;display:block;";
 const needleEl = document.createElement("div");
@@ -621,12 +621,12 @@ function placeTorch() {
 
 // --- hearts HUD (10 hearts, half-heart granularity) -------------------------
 const heartsEl = document.createElement("div");
-heartsEl.style.cssText = "position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:12;display:flex;gap:2px;pointer-events:none;";
+heartsEl.style.cssText = "position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:12;display:flex;gap:4px;pointer-events:none;";
 document.body.appendChild(heartsEl);
 const heartFills = [];
 for (let i = 0; i < 10; i++) {
   const h = document.createElement("div");
-  h.style.cssText = "position:relative;width:21px;height:20px;font:19px/20px sans-serif;";
+  h.style.cssText = "position:relative;width:30px;height:28px;font:27px/28px sans-serif;";
   const base = document.createElement("span"); base.textContent = "♥"; base.style.cssText = "position:absolute;left:0;top:0;color:#37323a;text-shadow:0 1px 2px #000;";
   const fill = document.createElement("span"); fill.textContent = "♥"; fill.style.cssText = "position:absolute;left:0;top:0;color:#ff3b46;display:inline-block;overflow:hidden;width:100%;white-space:nowrap;text-shadow:0 1px 2px #000;";
   h.append(base, fill); heartsEl.append(h); heartFills.push(fill);
@@ -635,8 +635,8 @@ function updateHearts() { for (let i = 0; i < 10; i++) heartFills[i].style.width
 
 // flashlight battery bar
 const batteryEl = document.createElement("div");
-batteryEl.style.cssText = "position:fixed;bottom:40px;left:50%;transform:translateX(-50%);z-index:12;width:170px;font:11px/1.5 ui-monospace,monospace;color:#dce6f4;text-align:center;pointer-events:none;text-shadow:0 1px 2px #000;";
-batteryEl.innerHTML = '<div style="margin-bottom:3px">🔦 <span id="batTxt"></span></div><div style="height:7px;background:#1a2230;border:1px solid #3a465c;border-radius:4px;overflow:hidden"><div id="batFill" style="height:100%;width:100%"></div></div>';
+batteryEl.style.cssText = "position:fixed;bottom:60px;left:50%;transform:translateX(-50%);z-index:12;width:250px;font:14px/1.5 ui-monospace,monospace;color:#dce6f4;text-align:center;pointer-events:none;text-shadow:0 1px 2px #000;";
+batteryEl.innerHTML = '<div style="margin-bottom:5px">🔦 <span id="batTxt"></span></div><div style="height:12px;background:#1a2230;border:1px solid #3a465c;border-radius:5px;overflow:hidden"><div id="batFill" style="height:100%;width:100%"></div></div>';
 document.body.appendChild(batteryEl);
 const batFill = batteryEl.querySelector("#batFill"), batTxt = batteryEl.querySelector("#batTxt");
 function updateBattery() {
