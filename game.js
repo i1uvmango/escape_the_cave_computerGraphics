@@ -405,8 +405,28 @@ function buildWorld(c, isTut = false) {
 // --- first-person controller (pointer lock + clamped look) ------------------
 const pos = new THREE.Vector3(), vel = new THREE.Vector3();
 // invisible player body: FrontSide capsule — camera sits inside it (backfaces culled → unseen in 1st person) but it casts a shadow
-const playerBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.45, 2.0, 4, 8), new THREE.MeshStandardMaterial({ color: 0x202327 }));
-playerBody.castShadow = true; playerBody.receiveShadow = false; playerBody.visible = false; scene.add(playerBody);
+let playerBody = null, playerMixer = null, playerAction = null;   // humanoid shadow caster (from the Mixamo mesh)
+function buildPlayerBody() {
+  if (playerBody) { playerBody.removeFromParent(); playerBody = null; playerMixer = null; playerAction = null; }
+  if (goblinTemplate) {
+    const model = cloneSkinned(goblinTemplate);
+    model.scale.setScalar(goblinTemplate.userData.fit);
+    model.traverse((o) => {
+      if (!o.isMesh) return;
+      o.frustumCulled = false; o.castShadow = true; o.receiveShadow = false;
+      o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();  // isolate from the goblins
+      for (const m of (Array.isArray(o.material) ? o.material : [o.material])) m.side = THREE.FrontSide; // backface-cull → unseen from inside
+    });
+    playerBody = new THREE.Group(); playerBody.add(model);
+    playerMixer = new THREE.AnimationMixer(model);
+    if (goblinClips.length) { playerAction = playerMixer.clipAction(goblinClips[0]); playerAction.play(); playerAction.paused = true; }
+  } else {                                          // capsule fallback if the FBX failed
+    const cap = new THREE.Mesh(new THREE.CapsuleGeometry(0.45, 2.0, 4, 8), new THREE.MeshStandardMaterial({ color: 0x202327 }));
+    cap.castShadow = true; cap.position.y = 1.45;
+    playerBody = new THREE.Group(); playerBody.add(cap);
+  }
+  playerBody.visible = false; scene.add(playerBody);
+}
 // only the NEAREST glowstone casts a shadow (1 shadow light, cost)
 let shadowTorch = null;
 function updateShadowLight() {
@@ -477,7 +497,13 @@ function updatePlayer(dt) {
   }
   camera.position.set(pos.x, pos.y + (PH - 0.5), pos.z);
   headLamp.position.copy(camera.position);
-  playerBody.visible = true; playerBody.position.set(pos.x, pos.y + 1.45, pos.z);   // follows player (invisible in 1st person)
+  if (playerBody) {                                 // humanoid shadow follows the player (invisible in 1st person)
+    playerBody.visible = true;
+    playerBody.position.set(pos.x, pos.y, pos.z);    // model origin = feet
+    playerBody.rotation.y = yaw;                     // face look/move direction
+    if (playerAction) playerAction.paused = len <= 0;   // walk only while moving
+    if (playerMixer) playerMixer.update(dt);
+  }
 }
 
 // --- gameplay update ---------------------------------------------------------
@@ -980,6 +1006,7 @@ function toggleMusic() { if (!musicGain) return; musicOn = !musicOn; musicGain.g
 (async function boot() {
   hud.textContent = "불러오는 중…";
   await loadGoblin();
+  buildPlayerBody();                  // humanoid shadow caster (needs goblinTemplate)
   if (TUTORIAL) {                     // tutorial stage
     tutorialMode = true;
     buildWorld(makeTutorialCave(), true);
